@@ -77,6 +77,18 @@ def weather_for(dates: pd.DatetimeIndex) -> pd.DataFrame:
     return out
 
 
+def climate_for(dates: pd.DatetimeIndex) -> pd.DataFrame:
+    """Weather nobody knows in advance: the 2020-2024 average for the same day of the year."""
+    w = load_weather().set_index("date")
+    past = w[w.index.year < 2025]
+    clim = past.groupby(past.index.dayofyear).mean(numeric_only=True)
+    out = clim.reindex(pd.DatetimeIndex(dates).dayofyear).set_index(pd.DatetimeIndex(dates, name="date"))
+    out["source"] = "climate"
+    out["rain_day"] = out.rain_mm * 0.6
+    out["snow_day"] = out.snow_cm * 0.6
+    return out
+
+
 def load_events() -> pd.DataFrame:
     ev = pd.read_csv(EXT / "events.csv", parse_dates=["date_from", "date_to"])
     return ev

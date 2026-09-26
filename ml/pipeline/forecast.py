@@ -17,17 +17,17 @@ from .model import FEATURES, Forecaster
 AS_OF = "2025-10-31"
 FORECAST_FROM, FORECAST_TO = "2025-11-01", "2026-10-31"
 SUBMISSION_TO = "2025-12-31"
+LF = chr(10)  # unix line endings on every OS, like the organizers' sample file
 # level of November and December against the latest clean October weeks
 SEASON = {11: 1.0, 12: 1.0}
 
 
-def month_index(hourly, days):
-    """2025 midweek level of each month relative to October (whole network, weather removed)."""
-    d = hourly.groupby("date").boardings.sum()
-    k = days.reindex(d.index)
-    mid = d[k.kind == "mid"]
-    lvl = mid.groupby(mid.index.month).median()
-    return (lvl / lvl[10]).to_dict()
+def month_index(model):
+    """2025 midweek level of each month relative to October, summed over routes, repair days left out."""
+    d = model.daily[(model.daily.kind == "mid") & (model.daily.event == 0) & (model.daily.route != 5)]
+    med = d.groupby(["route", d.date.dt.month]).total.median().unstack()
+    med = med.dropna()
+    return (med.sum() / med[10].sum()).to_dict()
 
 
 def model_card(model, months):
@@ -68,10 +68,10 @@ def event_effects(hourly, events):
 
 def main():
     hourly, days, events, sources = load_inputs()
-    idx = month_index(hourly, days)
-    months = {m: v for m, v in idx.items() if m <= 10}
+    model = Forecaster().fit(hourly, days, events, AS_OF)
+    months = {m: v for m, v in month_index(model).items() if m <= 10}
     months.update(SEASON)
-    model = Forecaster(month_factor=months).fit(hourly, days, events, AS_OF)
+    model.month_factor = months
     dates = pd.date_range(FORECAST_FROM, FORECAST_TO)
     pred = model.predict(dates)
 
@@ -91,7 +91,7 @@ def main():
     assert len(sub) == 10 * 61 * 24 and sub.prediction.notna().all()
     out = ML.parent / "submission"
     out.mkdir(exist_ok=True)
-    sub.to_csv(out / "submission.csv", sep=";", index=False)
+    sub.to_csv(out / "submission.csv", sep=";", index=False, lineterminator=LF)
 
     cal = days.reset_index()[["date", "kind", "hol", "pre", "school"]]
     cal = cal[(cal.date >= "2025-01-01") & (cal.date <= "2026-12-31")]
@@ -104,7 +104,8 @@ def main():
 
     wx = external.weather_for(pd.date_range("2025-01-01", FORECAST_TO))
     pd.DataFrame({"date": wx.index.strftime("%Y-%m-%d"), "t_mean": wx.t_mean.round(1), "precip_mm": wx.precip_mm.round(1),
-                  "snow_cm": wx.snow_cm.round(1), "source": wx.source}).to_csv(ARTIFACTS / "weather_daily.csv", index=False)
+                  "snow_cm": wx.snow_cm.round(1), "rain_day_mm": wx.rain_day.round(1), "snow_day_cm": wx.snow_day.round(2),
+                  "source": wx.source}).to_csv(ARTIFACTS / "weather_daily.csv", index=False, lineterminator=LF)
 
     ev = external.load_events()
     ev_out = ev.assign(factor=event_effects(hourly, ev),
@@ -113,19 +114,26 @@ def main():
 
     b = model.beta
     factors = {
-        "weather": {"cold_coef": round(b["cold"], 5), "heat_coef": round(b["heat"], 5),
-                    "precip_coef": round((b["rain_warm"] + b["rain_we"]) / 2, 5), "snow_coef": round(b["snow"], 5)},
-        "formula": "m = exp(cold_coef*max(-temp_delta,0) + heat_coef*max(temp_delta,0) + precip_coef*ln(1+precip_mm) + snow_coef*ln(1+snow_cm)) * (1+event_pct/100) * (1+season_pct/100)",
-        "limits": {"temp_delta": [-15, 15], "precip_mm": [0, 30], "snow_cm": [0, 30], "event_pct": [-100, 100], "season_pct": [-30, 30]},
+        "weather": {
+            "coef": {k: round(float(b[k]), 5) for k in ("rain_warm", "rain_we", "snow", "heat", "cold")},
+            "rain_warm_min_t": 12, "heat_above_t": 20, "cold_below_t": -5,
+        },
+        "formula": ("Для каждого дня: t = t_mean + temp_delta; дневные осадки и снег из сценария, если заданы, иначе из прогноза погоды; "
+                    "признаки rain_warm = ln(1+дождь) в будни при t >= 12, rain_we = ln(1+дождь) в нерабочие дни, snow = ln(1+снег), "
+                    "heat = max(t-20, 0), cold = max(-5-t, 0); множитель = exp(сумма coef x (признак сценария - признак прогноза)) "
+                    "x (1 + event_pct/100) x (1 + season_pct/100)"),
+        "limits": {"temp_delta": [-15, 15], "precip_mm": [0, 20], "snow_cm": [0, 5], "event_pct": [-100, 100], "season_pct": [-30, 30]},
         "presets": [
-            {"id": "snowfall", "title": "Сильный снегопад", "temp_delta": -5, "precip_mm": 0, "snow_cm": 10, "event_pct": 0, "season_pct": 0},
+            {"id": "snowfall", "title": "Снегопад", "temp_delta": -3, "precip_mm": 0, "snow_cm": 5, "event_pct": 0, "season_pct": 0},
             {"id": "rain", "title": "Затяжной дождь", "temp_delta": 0, "precip_mm": 12, "snow_cm": 0, "event_pct": 0, "season_pct": 0},
-            {"id": "frost", "title": "Сильный мороз", "temp_delta": -15, "precip_mm": 0, "snow_cm": 0, "event_pct": 0, "season_pct": 0},
+            {"id": "heat", "title": "Жара", "temp_delta": 8, "precip_mm": 0, "snow_cm": 0, "event_pct": 0, "season_pct": 0},
             {"id": "closure", "title": "Закрытие участка", "temp_delta": 0, "precip_mm": 0, "snow_cm": 0, "event_pct": -60, "season_pct": 0},
             {"id": "event", "title": "Массовое мероприятие", "temp_delta": 0, "precip_mm": 0, "snow_cm": 0, "event_pct": 25, "season_pct": 0},
             {"id": "summer", "title": "Летний спад", "temp_delta": 0, "precip_mm": 0, "snow_cm": 0, "event_pct": 0, "season_pct": -20},
         ],
-        "note": "Коэффициенты взяты из той же регрессии, что строит прогноз уровня дня: это оценка по истории 2025 года, а не допущение.",
+        "note": ("Погодные коэффициенты - те же, что в модели уровня дня, и применяются по тем же правилам: дождь в будни влияет только в тёплую погоду, "
+                 "жара - выше 20 °C. Мороз в данных 2025 года на поездки почти не влиял, его коэффициент близок к нулю. "
+                 "Осадки и снег - за дневные часы 7-21, в пределах, которые встречались в истории."),
     }
     (ARTIFACTS / "factors.json").write_text(json.dumps(factors, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -139,6 +147,8 @@ def main():
             "coefficients": {k: round(float(v), 4) for k, v in b.items()},
             "month_factor": {str(k): round(float(v), 3) for k, v in months.items()},
             "special_days": model.special_days,
+            "special_rules": ["31 декабря: профиль воскресенья, вечером посадки ниже обычного (17 ч x0.9, 20 ч x0.7, 22-23 ч x0.45)",
+                              "Маршрут 5 с 16 декабря 2025: 35% уровня маршрута 25 и его почасовой профиль (своей истории нет)"],
             "trained_until": AS_OF,
         },
         "backtests": bt.get("backtests", []),

@@ -33,6 +33,8 @@ def day_table(dates, cal: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
                 np.where(is_hol & (dow < 5), "hol", [SHAPE_OF_DOW[x] for x in dow]))
     weekend = (dow >= 5) & ~work_sat
     d["weekend"] = weekend.astype(int)
+    # non-working day: an ordinary weekend or a holiday; "по выходным" in service notices means these days
+    d["offday"] = (weekend | is_hol).astype(int)
     d["hol"] = (is_hol & (dow < 5)).astype(int)
     d["hol_we"] = (is_hol & (dow >= 5)).astype(int)
     d["pre"] = c.is_preholiday.fillna(0).astype(int).values
@@ -55,8 +57,8 @@ def day_table(dates, cal: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
 EVENT_FACTOR = {"closure": 0.05}
 
 
-def _covers(days: str, dow: int) -> bool:
-    return days == "all" or (days == "weekend" and dow >= 5) or (days == "workday" and dow < 5)
+def _covers(days: str, offday) -> bool:
+    return days == "all" or (days == "weekend" and bool(offday)) or (days == "workday" and not offday)
 
 
 def base_kind(kind: str) -> str:
@@ -112,10 +114,10 @@ class Forecaster:
 
     def _event_mask(self, routes, dates) -> np.ndarray:
         m = np.zeros(len(dates), dtype=int)
-        dow = pd.DatetimeIndex(dates).dayofweek
+        off = self.days.offday.reindex(pd.DatetimeIndex(dates)).fillna(0).values
         for e in self.events.itertuples():
             sel = (routes == e.route) & (dates >= e.date_from).values & (dates <= e.date_to).values
-            sel &= np.array([_covers(e.days, x) for x in dow])
+            sel &= np.array([_covers(e.days, x) for x in off])
             m[sel] = 1
         return m
 
@@ -234,7 +236,7 @@ class Forecaster:
             active = self._event_mask(np.full(len(days), r), days.index.to_series())
             ends = list(current[current.route == r].itertuples())
             for i, (day, row) in enumerate(days.iterrows()):
-                restored = any(day > e.date_to and _covers(e.days, row.dow) for e in ends)
+                restored = any(day > e.date_to and _covers(e.days, row.offday) for e in ends)
                 if r in self.new_routes:
                     b = self._new_route_base(r, day, row.kind)
                 else:
@@ -261,7 +263,7 @@ class Forecaster:
     def _event_factor(self, r, day):
         """Event that starts after the forecast date: no own history yet, only a full closure is priced in."""
         for e in self.events.itertuples():
-            if e.route == r and e.date_from <= day <= e.date_to and _covers(e.days, day.dayofweek):
+            if e.route == r and e.date_from <= day <= e.date_to and _covers(e.days, self.days.offday.get(day, 0)):
                 return EVENT_FACTOR.get(e.kind, 1.0)
         return 1.0
 
