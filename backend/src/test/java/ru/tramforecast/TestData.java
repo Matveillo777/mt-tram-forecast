@@ -10,6 +10,7 @@ import java.time.LocalDate;
 /**
  * Маленький набор артефактов с простыми формулами, чтобы в тестах суммы считались в уме:
  * прогноз p50 = маршрут + час, p10 = p50 / 2, p90 = p50 * 2; история = маршрут * 10 + час.
+ * Погода прогноза: 4 °C и 1 мм дневного дождя без снега каждый день (1 ноября - 2.1 °C).
  */
 final class TestData {
 
@@ -74,23 +75,34 @@ final class TestData {
             StringBuilder c = new StringBuilder("date,day_type,is_holiday,is_preholiday,school_break,note\n");
             for (LocalDate d = HISTORY_FROM; !d.isAfter(FORECAST_TO); d = d.plusDays(1)) {
                 boolean holiday = d.equals(LocalDate.of(2025, 11, 4));
-                c.append(d).append(',').append(holiday ? "holiday" : "workday").append(',').append(holiday ? 1 : 0)
+                String type = holiday ? "holiday" : switch (d.getDayOfWeek()) {
+                    case SATURDAY -> "saturday";
+                    case SUNDAY -> "sunday";
+                    default -> "workday";
+                };
+                c.append(d).append(',').append(type).append(',').append(holiday ? 1 : 0)
                         .append(",0,0,").append(holiday ? "День народного единства" : "").append('\n');
             }
             write(dir, "calendar.csv", c.toString());
-            write(dir, "weather_daily.csv", """
-                    date,t_mean,precip_mm,snow_cm,source,extra
-                    2025-10-01,8.5,0.0,0.0,observed,
-                    2025-11-01,2.1,1.5,,climate,x
+            StringBuilder w = new StringBuilder("""
+                    date,t_mean,precip_mm,snow_cm,rain_day_mm,snow_day_cm,source,extra
+                    2025-10-01,8.5,0.0,0.0,0.0,0.0,observed,
+                    2025-11-01,2.1,1.5,,1.0,0.0,climate,x
                     """);
+            for (LocalDate d = FORECAST_FROM.plusDays(1); !d.isAfter(FORECAST_TO); d = d.plusDays(1)) {
+                w.append(d).append(",4.0,1.0,0.0,1.0,0.0,climate,\n");
+            }
+            write(dir, "weather_daily.csv", w.toString());
             write(dir, "events.csv", """
                     route,date_from,date_to,days,factor,title,source_url
                     7,2025-11-01,2025-11-14,weekend,0.75,"Ремонт путей, маршрут укорочен",https://example.org/news
                     """);
             write(dir, "factors.json", """
-                    {"weather": {"cold_coef": -0.01, "heat_coef": -0.02, "precip_coef": -0.05, "snow_coef": -0.06},
+                    {"weather": {"coef": {"rain_warm": -0.05, "rain_we": -0.08, "snow": -0.06, "heat": -0.02,
+                                          "cold": -0.01},
+                                 "rain_warm_min_t": 12, "heat_above_t": 20, "cold_below_t": -5},
                      "formula": "exp(...)",
-                     "limits": {"temp_delta": [-15, 15], "precip_mm": [0, 30], "snow_cm": [0, 30],
+                     "limits": {"temp_delta": [-15, 15], "precip_mm": [0, 20], "snow_cm": [0, 5],
                                 "event_pct": [-100, 100], "season_pct": [-30, 30]},
                      "presets": [{"id": "snowfall", "title": "Сильный снегопад", "temp_delta": -5, "precip_mm": 0,
                                   "snow_cm": 10, "event_pct": 0, "season_pct": 0}],

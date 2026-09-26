@@ -68,22 +68,34 @@ public class DataStore {
         }
     }
 
-    public record Factors(double coldCoef, double heatCoef, double precipCoef, double snowCoef,
-                          Map<String, double[]> limits) {
+    /**
+     * Погодные коэффициенты модели уровня дня (логарифмическая шкала) и границы поправок.
+     * Признаки дня: дождь в будни при t >= rainWarmMinT, дождь в нерабочие дни, снег, жара выше heatAboveT,
+     * мороз ниже coldBelowT.
+     */
+    public record Factors(double rainWarm, double rainWe, double snow, double heat, double cold,
+                          double rainWarmMinT, double heatAboveT, double coldBelowT, Map<String, double[]> limits) {
 
-        /** Поправочный множитель сценария, одинаковый для p10/p50/p90. */
-        public double multiplier(double tempDelta, double precipMm, double snowCm, double eventPct, double seasonPct) {
-            double weather = Math.exp(coldCoef * Math.max(-tempDelta, 0) + heatCoef * Math.max(tempDelta, 0)
-                    + precipCoef * Math.log1p(precipMm) + snowCoef * Math.log1p(snowCm));
-            return Math.max(0, weather * (1 + eventPct / 100) * (1 + seasonPct / 100));
+        /** Сумма coef x признак для погоды дня; разность двух таких сумм - логарифм поправки. */
+        public double weatherLog(double t, double rainMm, double snowCm, boolean nonWorking) {
+            double rain = Math.log1p(rainMm);
+            return (nonWorking ? rainWe * rain : t >= rainWarmMinT ? rainWarm * rain : 0)
+                    + snow * Math.log1p(snowCm)
+                    + heat * Math.max(t - heatAboveT, 0)
+                    + cold * Math.max(coldBelowT - t, 0);
         }
+    }
+
+    /** Погода дня прогноза, от которой считаются поправки сценария: t_mean и осадки за 7-21 ч. */
+    public record DayBase(double t, double rainMm, double snowCm, boolean nonWorking) {
     }
 
     public record CalendarDay(String date, String dayType, int isHoliday, int isPreholiday, int schoolBreak,
                               String note) {
     }
 
-    public record WeatherDay(String date, Double tMean, Double precipMm, Double snowCm, String source) {
+    public record WeatherDay(String date, Double tMean, Double precipMm, Double snowCm, Double rainDayMm,
+                             Double snowDayCm, String source) {
     }
 
     public record Event(int route, String dateFrom, String dateTo, String days, double factor, String title,
@@ -104,6 +116,7 @@ public class DataStore {
     private final List<CalendarDay> calendar;
     private final List<WeatherDay> weather;
     private final List<Event> events;
+    private final DayBase[] forecastDays;
 
     public DataStore(@Value("${app.data-dir}") String dataDir, @Value("${app.today}") String today, JsonMapper json) {
         this.json = json;
@@ -143,6 +156,7 @@ public class DataStore {
         calendar = loadCalendar(dir);
         weather = loadWeather(dir);
         events = loadEvents(dir);
+        forecastDays = buildForecastDays();
         geojson = buildGeojson();
 
         int stops = Arrays.stream(routes).mapToInt(r -> r.stopIds().length).sum();
@@ -202,6 +216,11 @@ public class DataStore {
 
     public List<Event> events() {
         return events;
+    }
+
+    /** Погода и тип каждого дня прогноза, индекс как у дней в forecast(). */
+    public DayBase[] forecastDays() {
+        return forecastDays;
     }
 
     private Route[] loadRoutes(JsonNode doc) {
@@ -373,20 +392,15 @@ public class DataStore {
     private Factors loadFactors(JsonNode doc) {
         String file = "factors.json";
         JsonNode w = doc.path("weather");
-        // старый формат с одним temp_coef: используем его и для холода, и для жары
-        double legacyTemp = w.path("temp_coef").asDouble(Double.NaN);
-        double[] coef = new double[4];
-        String[] keys = {"cold_coef", "heat_coef", "precip_coef", "snow_coef"};
+        String[] keys = {"/coef/rain_warm", "/coef/rain_we", "/coef/snow", "/coef/heat", "/coef/cold",
+                "/rain_warm_min_t", "/heat_above_t", "/cold_below_t"};
+        double[] v = new double[keys.length];
         for (int i = 0; i < keys.length; i++) {
-            JsonNode v = w.path(keys[i]);
-            if (v.isNumber()) {
-                coef[i] = v.asDouble();
-            } else if (i < 2 && !Double.isNaN(legacyTemp)) {
-                log.warn("factors.json: нет weather.{}, использую weather.temp_coef = {}", keys[i], legacyTemp);
-                coef[i] = legacyTemp;
-            } else {
-                throw fail(file, "weather." + keys[i] + " должно быть числом");
+            JsonNode node = w.at(keys[i]);
+            if (!node.isNumber()) {
+                throw fail(file, "weather" + keys[i].replace('/', '.') + " должно быть числом");
             }
+            v[i] = node.asDouble();
         }
         Map<String, double[]> limits = new LinkedHashMap<>();
         for (String key : LIMIT_KEYS) {
@@ -400,7 +414,7 @@ public class DataStore {
         if (!doc.path("presets").isArray()) {
             throw fail(file, "presets должно быть массивом");
         }
-        return new Factors(coef[0], coef[1], coef[2], coef[3], limits);
+        return new Factors(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], limits);
     }
 
     private List<CalendarDay> loadCalendar(Path dir) {
@@ -441,6 +455,8 @@ public class DataStore {
         int cTemp = t.col("t_mean");
         int cPrecip = t.col("precip_mm");
         int cSnow = t.col("snow_cm");
+        int cRainDay = t.col("rain_day_mm");
+        int cSnowDay = t.col("snow_day_cm");
         int cSource = t.col("source");
         List<WeatherDay> out = new ArrayList<>();
         for (int i = 0; i < t.rows().size(); i++) {
@@ -450,7 +466,9 @@ public class DataStore {
                 throw fail(where, "source должен быть одним из " + WEATHER_SOURCES);
             }
             out.add(new WeatherDay(parseDate(where, "date", row[cDate]).toString(), optDouble(where, "t_mean", row[cTemp]),
-                    optDouble(where, "precip_mm", row[cPrecip]), optDouble(where, "snow_cm", row[cSnow]), row[cSource]));
+                    optDouble(where, "precip_mm", row[cPrecip]), optDouble(where, "snow_cm", row[cSnow]),
+                    optDouble(where, "rain_day_mm", row[cRainDay]), optDouble(where, "snow_day_cm", row[cSnowDay]),
+                    row[cSource]));
         }
         out.sort(Comparator.comparing(WeatherDay::date));
         return List.copyOf(out);
@@ -483,6 +501,26 @@ public class DataStore {
             out.add(new Event(route, from.toString(), to.toString(), row[cDays], factor, row[cTitle], row[cUrl]));
         }
         return List.copyOf(out);
+    }
+
+    /** Сценарии пересчитывают погоду каждого дня прогноза, поэтому без нее или без типа дня запуск не имеет смысла. */
+    private DayBase[] buildForecastDays() {
+        Map<String, WeatherDay> byDate = new HashMap<>();
+        weather.forEach(w -> byDate.put(w.date(), w));
+        Map<String, String> dayType = new HashMap<>();
+        calendar.forEach(c -> dayType.put(c.date(), c.dayType()));
+        DayBase[] out = new DayBase[forecast.days()];
+        for (int d = 0; d < out.length; d++) {
+            String date = forecast.from().plusDays(d).toString();
+            WeatherDay w = byDate.get(date);
+            if (w == null || w.tMean() == null || w.rainDayMm() == null || w.snowDayCm() == null
+                    || w.rainDayMm() < 0 || w.snowDayCm() < 0) {
+                throw fail("weather_daily.csv", "для даты прогноза " + date
+                        + " нужны t_mean и неотрицательные rain_day_mm и snow_day_cm");
+            }
+            out[d] = new DayBase(w.tMean(), w.rainDayMm(), w.snowDayCm(), !dayType.get(date).equals("workday"));
+        }
+        return out;
     }
 
     private JsonNode buildGeojson() {

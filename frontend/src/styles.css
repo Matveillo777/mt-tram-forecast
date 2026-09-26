@@ -299,6 +299,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); fon
 /* lets a long name cell shrink with an ellipsis instead of widening the table */
 .tbl td.shrink { max-width: 0; width: 100%; }
 .table-note { font-size: var(--fs-xs); color: var(--text-3); margin-top: var(--sp-2); }
+.tbl tr.has-note td { border-bottom: 0; padding-bottom: 2px; }
+.tbl td.row-note { white-space: normal; text-align: left; padding-top: 0; font-size: var(--fs-xs); color: var(--text-3); }
 
 .bar-cell { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
 .bar-cell .track { width: 90px; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; flex: none; }
@@ -327,7 +329,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); fon
 
 .chart { width: 100%; min-width: 0; }
 .note { font-size: var(--fs-xs); color: var(--text-3); line-height: 1.5; }
-.formula { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); overflow-x: auto; white-space: nowrap; }
 code, .code { font-family: var(--mono); font-size: 13px; }
 pre.code { margin: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-3); overflow-x: auto; color: var(--text-2); line-height: 1.55; }
 .link { color: var(--text-1); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; transition: text-decoration-color var(--dur) var(--ease); }
@@ -519,7 +520,8 @@ pre.code { margin: 0; background: var(--surface-2); border: 1px solid var(--line
   .live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
   .live-card { padding: var(--sp-2) var(--sp-3); }
   .live-card .nums { gap: var(--sp-3); }
-  .pop { position: fixed; left: 16px !important; right: 16px !important; top: auto !important; bottom: 16px; max-width: none; }
+  /* on phones every popover is a sheet at the bottom; .pop.up must not keep its bottom offset */
+  .pop, .pop.up { position: fixed; left: 16px !important; right: 16px !important; top: auto !important; bottom: 16px; max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

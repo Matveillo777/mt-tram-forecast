@@ -51,7 +51,10 @@ export interface ForecastResp {
   granularity: 'hour' | 'day' | 'month'
   routes: number[]
   stop: string | null
+  /** corrected p50 over base p50 for the whole selection */
   multiplier: number
+  /** the same, with only one factor of the scenario applied */
+  factor_effects: Record<EffectKey, number>
   series: ForecastPoint[]
   total: { p10: number; p50: number; p90: number; value: number }
 }
@@ -92,29 +95,19 @@ export interface LiveResp {
 }
 
 export type FactorKey = 'temp_delta' | 'precip_mm' | 'snow_cm' | 'event_pct' | 'season_pct'
+export type EffectKey = 'temp' | 'precip' | 'snow' | 'event' | 'season'
 
 export interface Factors {
-  weather: { cold_coef?: number; heat_coef?: number; precip_coef?: number; snow_coef?: number }
+  weather: {
+    coef: Record<'rain_warm' | 'rain_we' | 'snow' | 'heat' | 'cold', number>
+    rain_warm_min_t: number
+    heat_above_t: number
+    cold_below_t: number
+  }
   formula?: string
   limits: Record<FactorKey, [number, number]>
   presets: ({ id: string; title: string } & Record<FactorKey, number>)[]
   note?: string
-}
-
-/** Share by which one factor alone changes the forecast, same formula as the backend. */
-export function factorEffect(f: Factors, k: FactorKey, v: number): number | null {
-  const w = f.weather
-  switch (k) {
-    case 'temp_delta':
-      if (w.cold_coef == null || w.heat_coef == null) return null
-      return Math.exp(w.cold_coef * Math.max(-v, 0) + w.heat_coef * Math.max(v, 0)) - 1
-    case 'precip_mm':
-      return w.precip_coef == null ? null : Math.exp(w.precip_coef * Math.log1p(v)) - 1
-    case 'snow_cm':
-      return w.snow_coef == null ? null : Math.exp(w.snow_coef * Math.log1p(v)) - 1
-    default:
-      return v / 100
-  }
 }
 
 export interface ModelInfo {

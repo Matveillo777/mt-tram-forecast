@@ -16,6 +16,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.reactive.function.BodyInserters;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import ru.tramforecast.data.DataStore;
@@ -116,18 +118,102 @@ class ApiTest {
                 .jsonPath("$.total.p50").isEqualTo(342.0);
     }
 
+    private static JsonNode json(WebTestClient.BodyContentSpec body) {
+        return JsonMapper.builder().build().readTree(body.returnResult().getResponseBody());
+    }
+
+    /** Прогноз маршрута 17 на один день; p50 за сутки 684, в 8 часов 25. */
+    private JsonNode day17(String date, String corrections) {
+        return json(get("/api/v1/forecast?route=17&from=" + date + "&to=" + date + "&granularity=day&" + corrections));
+    }
+
     @Test
-    void correctionsGiveMultiplier() {
-        double m = Math.exp(-0.01 * 10 + -0.06 * Math.log(1 + 5)) * 1.2 * 0.9;
-        byte[] body = get("/api/v1/forecast?route=17&tempDelta=-10&snowCm=5&eventPct=20&seasonPct=-10")
-                .jsonPath("$.series[8].p50").isEqualTo(25.0)
-                .jsonPath("$.series[8].value").isEqualTo(Math.round(25 * m * 10) / 10.0)
-                .returnResult().getResponseBody();
-        double got = JsonMapper.builder().build().readTree(body).path("multiplier").asDouble();
-        assertThat(got).isCloseTo(m, within(1e-4));
-        // жара тоже снижает спрос, а при -100% событие обнуляет прогноз
-        get("/api/v1/forecast?tempDelta=10").jsonPath("$.multiplier").isEqualTo(Math.round(Math.exp(-0.2) * 1e4) / 1e4);
-        get("/api/v1/forecast?eventPct=-100").jsonPath("$.total.value").isEqualTo(0.0);
+    void weatherCorrectionsFollowModelRulesPerDay() {
+        // 5 ноября - среда, 4 °C: в будни дождь влияет только при t >= 12, поэтому поправки нет совсем
+        JsonNode workday = day17("2025-11-05", "precipMm=12");
+        assertThat(workday.path("multiplier").asDouble()).isEqualTo(1.0);
+        assertThat(workday.at("/total/value").asDouble()).isEqualTo(684.0);
+        assertThat(workday.at("/factor_effects/precip").asDouble()).isEqualTo(1.0);
+
+        // суббота и праздник: коэффициент дождя нерабочего дня, дневной дождь 1 мм заменяется на 12
+        double weekend = Math.exp(-0.08 * (Math.log(13) - Math.log(2)));
+        for (String date : List.of("2025-11-08", "2025-11-04")) {
+            JsonNode r = day17(date, "precipMm=12");
+            assertThat(r.path("multiplier").asDouble()).isCloseTo(weekend, within(1e-4));
+            assertThat(r.at("/total/p50").asDouble()).isCloseTo(684 * weekend, within(0.051));
+            assertThat(r.at("/total/value").asDouble()).isEqualTo(r.at("/total/p50").asDouble());
+        }
+        // почасовые p10/p50/p90 правятся одним множителем дня
+        get("/api/v1/forecast?route=17&from=2025-11-08&precipMm=12")
+                .jsonPath("$.series[8].p10").isEqualTo(round1(12.5 * weekend))
+                .jsonPath("$.series[8].p50").isEqualTo(round1(25 * weekend))
+                .jsonPath("$.series[8].p90").isEqualTo(round1(50 * weekend))
+                .jsonPath("$.series[8].value").isEqualTo(round1(25 * weekend));
+
+        // среда-суббота: правится только суббота, итоговый множитель - среднее с весами дней
+        JsonNode week = json(get("/api/v1/forecast?route=17&from=2025-11-05&to=2025-11-08&granularity=day&precipMm=12"));
+        assertThat(week.at("/series/0/value").asDouble()).isEqualTo(684.0);
+        assertThat(week.at("/series/2/value").asDouble()).isEqualTo(684.0);
+        assertThat(week.at("/series/3/value").asDouble()).isCloseTo(684 * weekend, within(0.051));
+        assertThat(week.path("multiplier").asDouble()).isCloseTo((3 + weekend) / 4, within(1e-4));
+
+        // -15 °C: t = -11, на 6 градусов ниже порога мороза -5
+        assertThat(day17("2025-11-05", "tempDelta=-15").path("multiplier").asDouble())
+                .isCloseTo(Math.exp(-0.01 * 6), within(1e-4));
+        // +15 °C в будни: t = 19 >= 12, и тот же дневной дождь 1 мм начинает снижать спрос; до жары (20) не дошли
+        assertThat(day17("2025-11-05", "tempDelta=15").path("multiplier").asDouble())
+                .isCloseTo(Math.exp(-0.05 * Math.log(2)), within(1e-4));
+        // снег: 0 -> 5 см
+        assertThat(day17("2025-11-05", "snowCm=5").path("multiplier").asDouble())
+                .isCloseTo(Math.exp(-0.06 * Math.log(6)), within(1e-4));
+    }
+
+    @Test
+    void factorEffectsAreConsistent() {
+        JsonNode none = day17("2025-11-05", "");
+        assertThat(none.path("multiplier").asDouble()).isEqualTo(1.0);
+        none.path("factor_effects").properties().forEach(e -> assertThat(e.getValue().asDouble()).isEqualTo(1.0));
+
+        JsonNode r = day17("2025-11-05", "tempDelta=-15&snowCm=5&eventPct=20&seasonPct=-10");
+        JsonNode fx = r.path("factor_effects");
+        assertThat(fx.path("temp").asDouble()).isCloseTo(Math.exp(-0.06), within(1e-4));
+        assertThat(fx.path("precip").asDouble()).isEqualTo(1.0);
+        assertThat(fx.path("snow").asDouble()).isCloseTo(Math.exp(-0.06 * Math.log(6)), within(1e-4));
+        assertThat(fx.path("event").asDouble()).isEqualTo(1.2);
+        assertThat(fx.path("season").asDouble()).isEqualTo(0.9);
+        // мороз и снег - независимые признаки, поэтому в один день факторы перемножаются
+        double product = fx.path("temp").asDouble() * fx.path("snow").asDouble() * 1.2 * 0.9;
+        assertThat(r.path("multiplier").asDouble()).isCloseTo(product, within(1e-3));
+        assertThat(r.at("/total/value").asDouble()).isCloseTo(684 * r.path("multiplier").asDouble(), within(0.1));
+
+        get("/api/v1/forecast?eventPct=-100").jsonPath("$.total.value").isEqualTo(0.0)
+                .jsonPath("$.factor_effects.event").isEqualTo(0.0);
+    }
+
+    @Test
+    void correctionsReachMapDispatchAndExport() {
+        double weekend = Math.exp(-0.08 * (Math.log(13) - Math.log(2)));
+        get("/api/v1/map?date=2025-11-08&hour=8&precipMm=12")
+                .jsonPath("$.routes[?(@.route == 17)].value").isEqualTo(List.of(round1(25 * weekend)));
+        get("/api/v1/map?date=2025-11-05&hour=8&precipMm=12")
+                .jsonPath("$.multiplier").isEqualTo(1.0)
+                .jsonPath("$.routes[?(@.route == 17)].value").isEqualTo(List.of(25.0));
+        // факт истории не правится
+        get("/api/v1/map?date=2025-10-04&hour=8&precipMm=12")
+                .jsonPath("$.multiplier").isEqualTo(1.0)
+                .jsonPath("$.routes[?(@.route == 17)].value").isEqualTo(List.of(178.0));
+        get("/api/v1/dispatch?route=17&date=2025-11-08&precipMm=12")
+                .jsonPath("$.hours[8].p50").isEqualTo(round1(25 * weekend))
+                .jsonPath("$.hours[8].p90").isEqualTo(round1(50 * weekend));
+        String csv = client.get().uri("/api/v1/export?route=17&from=2025-11-08&precipMm=12").exchange()
+                .expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+        String p50 = String.valueOf(round1(25 * weekend)).replace('.', ',');
+        assertThat(csv).contains("2025-11-08T08:00;17;;" + String.valueOf(round1(12.5 * weekend)).replace('.', ',')
+                + ";" + p50 + ";" + String.valueOf(round1(50 * weekend)).replace('.', ',') + ";" + p50);
+    }
+
+    private static double round1(double v) {
+        return Math.round(v * 10) / 10.0;
     }
 
     @Test
@@ -143,6 +229,10 @@ class ApiTest {
         problem("/api/v1/forecast?hourFrom=9&hourTo=3", 400);
         problem("/api/v1/forecast?tempDelta=99", 400)
                 .jsonPath("$.detail").value(d -> assertThat((String) d).contains("от -15 до 15"));
+        problem("/api/v1/forecast?precipMm=25", 400)
+                .jsonPath("$.detail").value(d -> assertThat((String) d).contains("precipMm").contains("от 0 до 20"));
+        problem("/api/v1/map?snowCm=6", 400)
+                .jsonPath("$.detail").value(d -> assertThat((String) d).contains("snowCm").contains("от 0 до 5"));
         problem("/api/v1/forecast?granularity=week", 400);
         problem("/api/v1/forecast?stop=s1", 400);
         problem("/api/v1/forecast?route=abc", 400);
@@ -290,6 +380,23 @@ class ApiTest {
                 .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
         client.post().uri("/api/v1/ingest/validations").contentType(MediaType.APPLICATION_XML)
                 .bodyValue("<a/>").exchange().expectStatus().isEqualTo(415);
+    }
+
+    @Test
+    void ingestEmptyBodyGives400WithAnyContentType() {
+        client.post().uri("/api/v1/ingest/validations").exchange().expectStatus().isBadRequest()
+                .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON)
+                .expectBody().jsonPath("$.detail").value(d -> assertThat((String) d).startsWith("Пустое тело запроса"));
+        for (String type : List.of("application/json", "text/csv", "text/plain", "application/xml")) {
+            client.post().uri("/api/v1/ingest/validations").contentType(MediaType.parseMediaType(type)).bodyValue("")
+                    .exchange().expectStatus().isBadRequest()
+                    .expectBody().jsonPath("$.detail").value(d -> assertThat((String) d).startsWith("Пустое тело"));
+        }
+        // байты без текстового типа (application/octet-stream) читаются как CSV
+        byte[] csv = "ngpt_route;validation_result;tran_date_time\n50;1;2025-11-07 10:00:00\n"
+                .getBytes(StandardCharsets.UTF_8);
+        client.post().uri("/api/v1/ingest/validations").body(BodyInserters.fromValue(csv))
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.boardings").isEqualTo(1);
     }
 
     @Test

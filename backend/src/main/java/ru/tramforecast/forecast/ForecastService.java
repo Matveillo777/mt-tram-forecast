@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import ru.tramforecast.ApiException;
 import ru.tramforecast.data.DataStore;
+import ru.tramforecast.data.DataStore.DayBase;
 import ru.tramforecast.data.DataStore.Grid;
 import ru.tramforecast.data.DataStore.Route;
 
@@ -33,8 +34,13 @@ public class ForecastService {
     public record Total(double p10, double p50, double p90, double value) {
     }
 
+    /** Итоговый множитель за выборку, если применить только один фактор сценария. */
+    public record FactorEffects(double temp, double precip, double snow, double event, double season) {
+    }
+
+    /** multiplier - итоговый множитель за выборку: сумма p50 с поправками к сумме базового p50. */
     public record Forecast(String horizon, String from, String to, String granularity, int[] routes, String stop,
-                           double multiplier, List<Point> series, Total total) {
+                           double multiplier, FactorEffects factorEffects, List<Point> series, Total total) {
     }
 
     public record HistoryPoint(String t, double actual) {
@@ -71,9 +77,13 @@ public class ForecastService {
     public record ExportData(String from, String to, List<ExportRow> rows) {
     }
 
+    /** Поправки сценария из запроса, уже проверенные по границам factors.json. */
+    record Scenario(double tempDelta, double precipMm, double snowCm, double eventPct, double seasonPct) {
+    }
+
     /** Разобранный и проверенный запрос. routes - индексы в массивах DataStore. */
     record Query(String horizon, LocalDate from, LocalDate to, int hourFrom, int hourTo, int[] routes, int stop,
-                 String stopId, String granularity, double multiplier) {
+                 String stopId, String granularity, Scenario scenario) {
     }
 
     private record Buckets(int[] ofDay, List<String> labels, boolean hourly) {
@@ -88,32 +98,44 @@ public class ForecastService {
     public Forecast forecast(ForecastParams p, CorrectionParams c) {
         Query q = forecastQuery(p, c);
         Buckets b = buckets(q.from(), q.to(), q.hourFrom(), q.hourTo(), q.granularity());
-        double[][] sums = sum(store.forecast(), q, q.routes(), b);
+        Scenario s = q.scenario();
+        double[] m = dayMultipliers(s, q.from(), b.ofDay().length);
+        double[][] sums = sum(store.forecast(), q, q.routes(), b, m);
         List<Point> series = new ArrayList<>(b.labels().size());
         double[] tot = new double[3];
         for (int i = 0; i < b.labels().size(); i++) {
             series.add(new Point(b.labels().get(i), round1(sums[0][i]), round1(sums[1][i]), round1(sums[2][i]),
-                    round1(sums[1][i] * q.multiplier())));
+                    round1(sums[1][i])));
             for (int k = 0; k < 3; k++) {
                 tot[k] += sums[k][i];
             }
         }
+        // вес дня - базовый p50 выборки за этот день, по нему поправки дней сводятся в один множитель
+        double[] w = sum(store.forecast(), q, q.routes(),
+                buckets(q.from(), q.to(), q.hourFrom(), q.hourTo(), "day"), null)[1];
+        FactorEffects effects = new FactorEffects(
+                effective(dayMultipliers(new Scenario(s.tempDelta(), 0, 0, 0, 0), q.from(), w.length), w),
+                effective(dayMultipliers(new Scenario(0, s.precipMm(), 0, 0, 0), q.from(), w.length), w),
+                effective(dayMultipliers(new Scenario(0, 0, s.snowCm(), 0, 0), q.from(), w.length), w),
+                effective(dayMultipliers(new Scenario(0, 0, 0, s.eventPct(), 0), q.from(), w.length), w),
+                effective(dayMultipliers(new Scenario(0, 0, 0, 0, s.seasonPct()), q.from(), w.length), w));
         return new Forecast(q.horizon(), q.from().toString(), q.to().toString(), q.granularity(), numbers(q.routes()),
-                q.stopId(), round4(q.multiplier()), series,
-                new Total(round1(tot[0]), round1(tot[1]), round1(tot[2]), round1(tot[1] * q.multiplier())));
+                q.stopId(), effective(m, w), effects, series,
+                new Total(round1(tot[0]), round1(tot[1]), round1(tot[2]), round1(tot[1])));
     }
 
     /** Те же параметры, что у /forecast, но с разбивкой по маршрутам. */
     public ExportData exportRows(ForecastParams p, CorrectionParams c) {
         Query q = forecastQuery(p, c);
         Buckets b = buckets(q.from(), q.to(), q.hourFrom(), q.hourTo(), q.granularity());
+        double[] m = dayMultipliers(q.scenario(), q.from(), b.ofDay().length);
         List<ExportRow> rows = new ArrayList<>(b.labels().size() * q.routes().length);
         for (int r : q.routes()) {
-            double[][] sums = sum(store.forecast(), q, new int[] {r}, b);
+            double[][] sums = sum(store.forecast(), q, new int[] {r}, b, m);
             int route = store.routes()[r].route();
             for (int i = 0; i < b.labels().size(); i++) {
                 rows.add(new ExportRow(b.labels().get(i), route, q.stopId(), round1(sums[0][i]), round1(sums[1][i]),
-                        round1(sums[2][i]), round1(sums[1][i] * q.multiplier())));
+                        round1(sums[2][i]), round1(sums[1][i])));
             }
         }
         return new ExportData(q.from().toString(), q.to().toString(), rows);
@@ -130,7 +152,7 @@ public class ForecastService {
         int stop = stop(routes, p.stop());
         String gran = Params.oneOf("granularity", p.granularity(), DEFAULT_GRANULARITY.get(horizon), GRANULARITIES);
         return new Query(horizon, from, to, hours[0], hours[1], routes, stop, stop < 0 ? null : p.stop().trim(), gran,
-                multiplier(c));
+                scenario(c));
     }
 
     public History history(HistoryParams p) {
@@ -144,9 +166,10 @@ public class ForecastService {
         long days = to.toEpochDay() - from.toEpochDay() + 1;
         String gran = Params.oneOf("granularity", p.granularity(), days == 1 ? "hour" : days <= 92 ? "day" : "month",
                 GRANULARITIES);
-        Query q = new Query(null, from, to, hours[0], hours[1], routes, stop, stop < 0 ? null : p.stop().trim(), gran, 1);
+        Query q = new Query(null, from, to, hours[0], hours[1], routes, stop, stop < 0 ? null : p.stop().trim(), gran,
+                null);
         Buckets b = buckets(from, to, hours[0], hours[1], gran);
-        double[] sums = sum(g, q, routes, b)[0];
+        double[] sums = sum(g, q, routes, b, null)[0];
         List<HistoryPoint> series = new ArrayList<>(sums.length);
         double total = 0;
         for (int i = 0; i < sums.length; i++) {
@@ -161,7 +184,8 @@ public class ForecastService {
     public MapView map(String dateParam, String hourParam, CorrectionParams c) {
         LocalDate date = Params.date("date", dateParam, store.today());
         Integer hour = Params.blank(hourParam) ? null : Params.integer("hour", hourParam, 0, 0, HOURS - 1);
-        double m = multiplier(c);
+        Scenario scenario = scenario(c);
+        double m = 1;
         Grid g;
         int col;
         String kind;
@@ -169,11 +193,12 @@ public class ForecastService {
             g = store.forecast();
             col = 1;
             kind = "forecast";
+            m = dayMultipliers(scenario, date, 1)[0];
         } else if (store.history().contains(date)) {
+            // факт сценарием не правим
             g = store.history();
             col = 0;
             kind = "history";
-            m = 1;
         } else {
             throw ApiException.badRequest("Дата " + date + " вне истории (" + store.history().from() + " - "
                     + store.history().to() + ") и прогноза (" + store.forecast().from() + " - "
@@ -218,7 +243,7 @@ public class ForecastService {
         int capacity = Params.integer("capacity", capacityParam, 190, 1, 1000);
         double peakShare = Params.number("peakShare", peakShareParam, 0.35, 0.01, 1);
         int planned = Params.integer("plannedPerHour", plannedParam, 8, 0, 60);
-        double m = multiplier(c);
+        double m = dayMultipliers(scenario(c), date, 1)[0];
         int r = routes[0];
         int day = g.day(date);
         List<DispatchHour> hours = new ArrayList<>(HOURS);
@@ -235,13 +260,47 @@ public class ForecastService {
         return new Dispatch(store.routes()[r].route(), date.toString(), capacity, peakShare, planned, round4(m), hours);
     }
 
-    public double multiplier(CorrectionParams c) {
-        DataStore.Factors f = store.factors();
-        return f.multiplier(correction("tempDelta", "temp_delta", c.tempDelta()),
+    private Scenario scenario(CorrectionParams c) {
+        return new Scenario(correction("tempDelta", "temp_delta", c.tempDelta()),
                 correction("precipMm", "precip_mm", c.precipMm()),
                 correction("snowCm", "snow_cm", c.snowCm()),
                 correction("eventPct", "event_pct", c.eventPct()),
                 correction("seasonPct", "season_pct", c.seasonPct()));
+    }
+
+    /**
+     * Множитель сценария для каждого дня начиная с from, по тем же правилам, что в модели уровня дня:
+     * погода дня сдвигается на tempDelta, дневные осадки и снег заменяются заданными в сценарии,
+     * и результат сравнивается с погодой, на которой построен прогноз. Событие и сезон общие для всех дней.
+     */
+    private double[] dayMultipliers(Scenario s, LocalDate from, int days) {
+        DataStore.Factors f = store.factors();
+        DayBase[] base = store.forecastDays();
+        int day0 = store.forecast().day(from);
+        double common = (1 + s.eventPct() / 100) * (1 + s.seasonPct() / 100);
+        double[] out = new double[days];
+        for (int d = 0; d < days; d++) {
+            DayBase b = base[day0 + d];
+            double rain = s.precipMm() > 0 ? s.precipMm() : b.rainMm();
+            double snow = s.snowCm() > 0 ? s.snowCm() : b.snowCm();
+            double weather = Math.exp(f.weatherLog(b.t() + s.tempDelta(), rain, snow, b.nonWorking())
+                    - f.weatherLog(b.t(), b.rainMm(), b.snowCm(), b.nonWorking()));
+            out[d] = Math.max(0, weather * common);
+        }
+        return out;
+    }
+
+    /** Множители дней, сведенные в один с весами дней; если в выборке нет посадок - просто среднее. */
+    private static double effective(double[] m, double[] w) {
+        double num = 0;
+        double den = 0;
+        double mean = 0;
+        for (int d = 0; d < m.length; d++) {
+            num += m[d] * w[d];
+            den += w[d];
+            mean += m[d] / m.length;
+        }
+        return round4(den > 0 ? num / den : mean);
     }
 
     private double correction(String name, String key, String value) {
@@ -352,8 +411,8 @@ public class ForecastService {
         return new Buckets(ofDay, labels, gran.equals("hour"));
     }
 
-    /** Один проход по почасовой сетке: суммы по всем колонкам сетки для каждого бакета. */
-    private double[][] sum(Grid g, Query q, int[] routes, Buckets b) {
+    /** Один проход по почасовой сетке: суммы по всем колонкам для каждого бакета. dayMult - множитель дня или null. */
+    private double[][] sum(Grid g, Query q, int[] routes, Buckets b, double[] dayMult) {
         float[][] cols = g.cols();
         double[][] out = new double[cols.length][b.labels().size()];
         float[] shares = q.stop() < 0 ? null : store.routes()[routes[0]].shares();
@@ -363,8 +422,9 @@ public class ForecastService {
             for (int d = 0; d < days; d++) {
                 int base = g.index(r, day0 + d, 0);
                 int bucket = b.ofDay()[d];
+                double k = dayMult == null ? 1 : dayMult[d];
                 for (int h = q.hourFrom(); h <= q.hourTo(); h++) {
-                    double w = shares == null ? 1 : shares[q.stop() * HOURS + h];
+                    double w = (shares == null ? 1 : shares[q.stop() * HOURS + h]) * k;
                     int o = b.hourly() ? bucket + h - q.hourFrom() : bucket;
                     for (int c = 0; c < cols.length; c++) {
                         out[c][o] += cols[c][base + h] * w;

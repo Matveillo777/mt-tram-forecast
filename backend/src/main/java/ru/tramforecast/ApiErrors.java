@@ -65,8 +65,9 @@ public class ApiErrors implements WebExceptionHandler {
 
     @ExceptionHandler(UnsupportedMediaTypeStatusException.class)
     public ResponseEntity<ProblemDetail> mediaType(UnsupportedMediaTypeStatusException e) {
-        return problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                "Неподдерживаемый Content-Type: " + e.getContentType() + ". Ожидается text/csv или application/json");
+        return problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, (e.getContentType() == null
+                ? "Заголовок Content-Type не распознан" : "Неподдерживаемый Content-Type: " + e.getContentType())
+                + ". Ожидается text/csv или application/json");
     }
 
     @ExceptionHandler(Exception.class)

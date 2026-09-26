@@ -1,30 +1,47 @@
-import { useMemo, useState } from 'react'
-import { factorEffect as effect, useApi, type FactorKey, type Factors, type ForecastResp } from '../api'
+import { Fragment, useMemo, useState } from 'react'
+import { useApi, type EffectKey, type FactorKey, type Factors, type ForecastResp } from '../api'
 import { bandSeries, baseOption, EChart, lineSeries, tipHead, tipRow } from '../chart'
 import { dateShort, fmt, fmt1, pct, periodLabel } from '../format'
 import { useApp } from '../theme'
 import { Busy, ErrorState, Legend, Loading, Popover, Range, RoutePicker, Segmented, Stat, useNarrow } from '../ui'
 import { HORIZONS, type Horizon } from './ForecastPage'
 
-const SLIDERS: { key: FactorKey; param: string; label: string; unit: string; step: number }[] = [
-  { key: 'temp_delta', param: 'tempDelta', label: 'Температура относительно нормы', unit: '°C', step: 1 },
-  { key: 'precip_mm', param: 'precipMm', label: 'Дождь, осадки за сутки', unit: 'мм', step: 1 },
-  { key: 'snow_cm', param: 'snowCm', label: 'Снегопад', unit: 'см', step: 1 },
-  { key: 'event_pct', param: 'eventPct', label: 'Событие или перекрытие', unit: '%', step: 5 },
-  { key: 'season_pct', param: 'seasonPct', label: 'Сезонная поправка', unit: '%', step: 1 },
+// delta: the value shifts the weather of each day; otherwise it replaces the daytime amount from the weather forecast
+type Slider = { key: FactorKey; param: string; effect: EffectKey; label: string; unit: string; step: number; delta: boolean }
+
+const SLIDERS: Slider[] = [
+  { key: 'temp_delta', param: 'tempDelta', effect: 'temp', label: 'Сдвиг температуры', unit: '°C', step: 1, delta: true },
+  { key: 'precip_mm', param: 'precipMm', effect: 'precip', label: 'Дождь днём, 7-21 ч', unit: 'мм', step: 1, delta: false },
+  { key: 'snow_cm', param: 'snowCm', effect: 'snow', label: 'Снег днём, 7-21 ч', unit: 'см', step: 0.5, delta: false },
+  { key: 'event_pct', param: 'eventPct', effect: 'event', label: 'Событие или перекрытие', unit: '%', step: 5, delta: true },
+  { key: 'season_pct', param: 'seasonPct', effect: 'season', label: 'Сезонная поправка', unit: '%', step: 1, delta: true },
 ]
 
 type Values = Record<FactorKey, number>
 const ZERO: Values = { temp_delta: 0, precip_mm: 0, snow_cm: 0, event_pct: 0, season_pct: 0 }
 
-// the API may return p10/p90 before or after the correction; value/p50 tells which, so scale by it
-const band = (p?: ForecastResp['series'][number]) => {
-  if (!p) return [null, null] as const
-  const k = p.p50 > 0 ? p.value / p.p50 : 1
-  return [p.p10 * k, p.p90 * k] as const
-}
-
 const signed = (v: number, unit: string) => (v > 0 ? '+' : v < 0 ? '-' : '') + fmt1(Math.abs(v)) + ' ' + unit
+const shown = (s: Slider, v: number) => (s.delta ? signed(v, s.unit) : v === 0 ? 'по прогнозу погоды' : fmt1(v) + ' ' + s.unit)
+const noEffect = (e: number) => Math.abs(e - 1) < 0.001
+const coef = (x: number) => (x === 0 ? '0' : x.toLocaleString('ru-RU', { maximumFractionDigits: 5 }))
+
+/** Why a set factor changes nothing: the model reacts to weather only past its thresholds. */
+function whyNoEffect(f: Factors, key: FactorKey) {
+  const w = f.weather
+  switch (key) {
+    case 'precip_mm':
+      return `в будни при температуре ниже ${w.rain_warm_min_t} °C дождь на поездки почти не влияет`
+    case 'temp_delta':
+      return (
+        `спрос меняется только в жару выше ${w.heat_above_t} °C и в дождь по будням от ${w.rain_warm_min_t} °C` +
+        (w.coef.cold === 0 ? ', а мороз на поездки почти не влиял' : `, а также в мороз ниже ${w.cold_below_t} °C`)
+      )
+    case 'snow_cm':
+      return w.coef.snow === 0 ? 'снег на поездки почти не влиял' : 'в прогнозе погоды на эти дни уже столько снега'
+    default:
+      return ''
+  }
+}
 
 export default function ScenarioPage() {
   const factors = useApi<Factors>('/factors')
@@ -46,6 +63,8 @@ function Scenario({ f }: { f: Factors }) {
   const adj = useApi<ForecastResp>('/forecast', { ...scope, ...corr }, 150)
   const changed = SLIDERS.some((s) => v[s.key] !== 0)
   const preset = f.presets.find((p) => SLIDERS.every((s) => p[s.key] === v[s.key]))
+  // effect of each factor alone over the selected period, as the backend computed it day by day
+  const effectOf = (s: Slider) => (v[s.key] === 0 ? null : adj.data?.factor_effects?.[s.effect] ?? null)
 
   const option = useMemo(() => {
     const b = base.data
@@ -67,12 +86,12 @@ function Scenario({ f }: { f: Factors }) {
             tipHead(periodLabel(x[i], b.granularity), palette.text3) +
             tipRow(palette.base, 'Базовый', fmt(b.series[i].p50)) +
             tipRow(palette.forecast, 'С поправками', fmt(p?.value)) +
-            (p ? tipRow(palette.forecast, 'p10-p90', `${fmt(band(p)[0])} - ${fmt(band(p)[1])}`, 'band') : '')
+            (p ? tipRow(palette.forecast, 'p10-p90', `${fmt(p.p10)} - ${fmt(p.p90)}`, 'band') : '')
           )
         },
       },
       series: [
-        ...bandSeries('Интервал', x.map((t) => band(byT.get(t))[0]), x.map((t) => band(byT.get(t))[1]), palette.forecast),
+        ...bandSeries('Интервал', x.map((t) => byT.get(t)?.p10 ?? null), x.map((t) => byT.get(t)?.p90 ?? null), palette.forecast),
         lineSeries('Базовый', b.series.map((p) => p.p50), palette.base, { lineStyle: { width: 2, color: palette.base, type: [5, 4] } }),
         lineSeries('С поправками', val, palette.forecast),
       ],
@@ -82,6 +101,7 @@ function Scenario({ f }: { f: Factors }) {
   const bt = base.data?.total.p50 ?? 0
   const at = adj.data?.total.value ?? 0
   const err = base.error || adj.error
+  const w = f.weather
 
   return (
     <div className="page">
@@ -122,36 +142,34 @@ function Scenario({ f }: { f: Factors }) {
           {SLIDERS.map((s) => {
             const [lo, hi] = f.limits[s.key] ?? [0, 0]
             const val = v[s.key]
-            const e = effect(f, s.key, val)
+            const e = effectOf(s)
             return (
               <div className="slider" key={s.key}>
                 <div className="slider-top">
                   <span>{s.label}</span>
-                  <output className={val === 0 ? 'zero' : ''}>{signed(val, s.unit)}</output>
+                  <output className={val === 0 ? 'zero' : ''}>{shown(s, val)}</output>
                 </div>
                 <Range label={s.label} value={val} min={lo} max={hi} step={s.step} zero={lo < 0 ? 0 : lo} onChange={(x) => setV({ ...v, [s.key]: x })} />
                 <div className="slider-lim">
                   <span>{fmt(lo)}</span>
-                  <span className={e ? 'effect' : ''}>{e == null || val === 0 ? '' : `прогноз ${pct(e * 100)}`}</span>
+                  <span className={e == null ? '' : 'effect'}>{e == null ? '' : noEffect(e) ? 'в этот период не влияет' : `прогноз ${pct((e - 1) * 100)}`}</span>
                   <span>{fmt(hi)}</span>
                 </div>
               </div>
             )
           })}
-          <p className="note" style={{ marginTop: 8 }}>
-            Итог = базовый прогноз × погода × (1 + событие) × (1 + сезон). Поправка одна на весь период и на все часы.
-          </p>
+          {f.note && <p className="note" style={{ marginTop: 8 }}>{f.note}</p>}
           <div style={{ marginTop: 12 }}>
-            <Popover label="Как считается погода" title="Погодный множитель">
+            <Popover label="Как считается" title="Поправка сценария">
               <div className="stack" style={{ gap: 8 }}>
-                <div className="formula">exp(холод × похолодание + жара × потепление + дождь × ln(1 + мм) + снег × ln(1 + см))</div>
+                {f.formula && <div className="prose"><p>{f.formula}</p></div>}
                 <dl className="dl">
-                  <dt>холод</dt><dd className="num">{f.weather.cold_coef ?? '-'} на 1 °C</dd>
-                  <dt>жара</dt><dd className="num">{f.weather.heat_coef ?? '-'} на 1 °C</dd>
-                  <dt>дождь</dt><dd className="num">{f.weather.precip_coef ?? '-'}</dd>
-                  <dt>снег</dt><dd className="num">{f.weather.snow_coef ?? '-'}</dd>
+                  <dt>дождь в будни от {w.rain_warm_min_t} °C</dt><dd className="num">{coef(w.coef.rain_warm)}</dd>
+                  <dt>дождь в выходные</dt><dd className="num">{coef(w.coef.rain_we)}</dd>
+                  <dt>снег</dt><dd className="num">{coef(w.coef.snow)}</dd>
+                  <dt>жара выше {w.heat_above_t} °C</dt><dd className="num">{coef(w.coef.heat)}</dd>
+                  <dt>мороз ниже {w.cold_below_t} °C</dt><dd className="num">{coef(w.coef.cold)}</dd>
                 </dl>
-                {f.note && <p className="note">{f.note}</p>}
               </div>
             </Popover>
           </div>
@@ -168,8 +186,8 @@ function Scenario({ f }: { f: Factors }) {
                 <div className="stats">
                   <Stat label="Базовый прогноз" value={fmt(bt)} sub={`${dateShort(base.data.from)} - ${dateShort(base.data.to)}`} />
                   <Stat label="С поправками" value={fmt(at)} sub="посадок за период" />
-                  <Stat label="Изменение" value={bt ? pct(((at - bt) / bt) * 100) : '-'} sub={`${at >= bt ? '+' : '-'}${fmt(Math.abs(at - bt))} посадок`} signal={changed} />
-                  <Stat label="Множитель" value={'×' + adj.data.multiplier.toLocaleString('ru-RU', { maximumFractionDigits: 3 })} sub="к медиане и интервалу" />
+                  <Stat label="Изменение" value={bt ? pct(((at - bt) / bt) * 100) : '-'} sub={`${at >= bt ? '+' : '-'}${fmt(Math.abs(at - bt))} посадок`} signal={at !== bt} />
+                  <Stat label="Множитель" value={'×' + adj.data.multiplier.toLocaleString('ru-RU', { maximumFractionDigits: 3 })} sub="в среднем за период" />
                 </div>
                 <div className="card">
                   <div className="card-head">
@@ -187,19 +205,27 @@ function Scenario({ f }: { f: Factors }) {
                 <div className="card">
                   <div className="card-head">
                     <h2>Из чего складывается поправка</h2>
-                    <span className="hint">каждый фактор отдельно</span>
+                    <span className="hint">каждый фактор отдельно, за период</span>
                   </div>
                   <div className="table-wrap">
                     <table className="tbl">
                       <tbody>
                         {SLIDERS.map((s) => {
-                          const e = v[s.key] === 0 ? null : effect(f, s.key, v[s.key])
+                          const e = effectOf(s)
+                          const why = e != null && noEffect(e) ? whyNoEffect(f, s.key) : null
                           return (
-                            <tr key={s.key}>
-                              <td>{s.label}</td>
-                              <td className="faint">{v[s.key] === 0 ? 'без поправки' : signed(v[s.key], s.unit)}</td>
-                              <td><b>{e == null ? '-' : pct(e * 100)}</b></td>
-                            </tr>
+                            <Fragment key={s.key}>
+                              <tr className={why != null ? 'has-note' : ''}>
+                                <td className="wrap">{s.label}</td>
+                                <td className="faint">{v[s.key] === 0 ? 'без поправки' : shown(s, v[s.key])}</td>
+                                <td><b>{e == null ? '-' : pct((e - 1) * 100)}</b></td>
+                              </tr>
+                              {why != null && (
+                                <tr>
+                                  <td colSpan={3} className="row-note">в выбранный период не влияет{why && ': ' + why}</td>
+                                </tr>
+                              )}
+                            </Fragment>
                           )
                         })}
                       </tbody>

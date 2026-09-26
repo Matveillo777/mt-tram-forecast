@@ -86,7 +86,9 @@ public class ForecastController {
     }
 
     @Operation(summary = "Прогноз посадок с агрегацией по маршрутам, остановке, часам и периоду",
-            description = "value = p50 * multiplier, где multiplier считается по корректирующим коэффициентам")
+            description = "Поправки сценария считаются для каждого дня по правилам модели (погода дня, тип дня) "
+                    + "и применяются к почасовым p10, p50, p90 до агрегации; value = p50 с поправками. "
+                    + "multiplier - итоговый множитель за выборку, factor_effects - то же для каждого фактора отдельно")
     @GetMapping("/forecast")
     public ForecastService.Forecast forecast(@ParameterObject ForecastParams params,
                                              @ParameterObject CorrectionParams corrections) {

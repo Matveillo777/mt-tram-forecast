@@ -11,16 +11,19 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.UnsupportedMediaTypeStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import ru.tramforecast.ApiException;
 import ru.tramforecast.data.DataStore;
 import ru.tramforecast.data.DataStore.Grid;
 import ru.tramforecast.forecast.Params;
@@ -43,6 +46,11 @@ public class LiveController {
                        List<RouteLive> routes) {
     }
 
+    // первый тип - JSON, остальные читаются как CSV
+    private static final List<MediaType> INGEST_TYPES = List.of(MediaType.APPLICATION_JSON,
+            MediaType.parseMediaType("text/csv"), MediaType.TEXT_PLAIN,
+            MediaType.parseMediaType("application/vnd.ms-excel"), MediaType.APPLICATION_OCTET_STREAM);
+
     private final IngestService ingest;
     private final DemoStream demo;
     private final DataStore store;
@@ -61,19 +69,29 @@ public class LiveController {
     }
 
     @Operation(summary = "Прием валидаций: CSV датасета (разделитель ;) или JSON-массив записей",
-            description = "Посадкой считается запись с validation_result = 1. Маршрут берется из ngpt_route, "
-                    + "время из tran_date_time. Тело до 10 МБ.")
-    // браузер под Windows отдает .csv как application/vnd.ms-excel, без заголовка тело считается octet-stream
-    @PostMapping(value = "/ingest/validations", consumes = {"text/csv", MediaType.TEXT_PLAIN_VALUE,
-            "application/vnd.ms-excel", MediaType.APPLICATION_OCTET_STREAM_VALUE})
-    public Mono<IngestService.Result> ingestCsv(@RequestBody(required = false) Mono<String> body) {
-        return body.defaultIfEmpty("").publishOn(Schedulers.parallel()).map(ingest::csv);
-    }
-
-    @Operation(summary = "Прием валидаций в JSON: массив объектов с полями датасета")
-    @PostMapping(value = "/ingest/validations", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<IngestService.Result> ingestJson(@RequestBody(required = false) Mono<String> body) {
-        return body.defaultIfEmpty("").publishOn(Schedulers.parallel()).map(ingest::json);
+            description = "Формат определяется по Content-Type: application/json - JSON-массив объектов с полями "
+                    + "датасета; text/csv, text/plain, application/vnd.ms-excel, application/octet-stream или без "
+                    + "заголовка - CSV. Посадкой считается запись с validation_result = 1. Маршрут берется из "
+                    + "ngpt_route, время из tran_date_time. Тело до 10 МБ.")
+    // Один обработчик на все типы: при двух методах с разным consumes пустое тело подходило обоим.
+    // Браузер под Windows отдает .csv как application/vnd.ms-excel.
+    @PostMapping("/ingest/validations")
+    public Mono<IngestService.Result> ingest(ServerHttpRequest request,
+                                             @RequestBody(required = false) Mono<String> body) {
+        MediaType type = request.getHeaders().getContentType();
+        boolean json = type != null
+                && (type.isCompatibleWith(MediaType.APPLICATION_JSON) || "json".equals(type.getSubtypeSuffix()));
+        boolean csv = type == null || INGEST_TYPES.stream().skip(1).anyMatch(type::isCompatibleWith);
+        return body.defaultIfEmpty("").publishOn(Schedulers.parallel()).map(text -> {
+            if (text.isBlank()) {
+                throw ApiException.badRequest("Пустое тело запроса: пришлите CSV датасета (разделитель ;) "
+                        + "или JSON-массив записей валидаций");
+            }
+            if (!json && !csv) {
+                throw new UnsupportedMediaTypeStatusException(type, INGEST_TYPES);
+            }
+            return json ? ingest.json(text) : ingest.csv(text);
+        });
     }
 
     @Operation(summary = "Факт посадок по часам против прогноза p50 на дату")
