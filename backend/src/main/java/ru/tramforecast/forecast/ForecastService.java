@@ -79,7 +79,12 @@ public class ForecastService {
 
     /** Поправки сценария из запроса, уже проверенные по границам factors.json. */
     record Scenario(double tempDelta, double precipMm, double snowCm, double eventPct, double seasonPct) {
+        boolean neutral() {
+            return tempDelta == 0 && precipMm == 0 && snowCm == 0 && eventPct == 0 && seasonPct == 0;
+        }
     }
+
+    private static final FactorEffects NO_EFFECTS = new FactorEffects(1, 1, 1, 1, 1);
 
     /** Разобранный и проверенный запрос. routes - индексы в массивах DataStore. */
     record Query(String horizon, LocalDate from, LocalDate to, int hourFrom, int hourTo, int[] routes, int stop,
@@ -99,7 +104,8 @@ public class ForecastService {
         Query q = forecastQuery(p, c);
         Buckets b = buckets(q.from(), q.to(), q.hourFrom(), q.hourTo(), q.granularity());
         Scenario s = q.scenario();
-        double[] m = dayMultipliers(s, q.from(), b.ofDay().length);
+        // без поправок множители не нужны: это большинство запросов, им не нужен второй проход по данным
+        double[] m = s.neutral() ? null : dayMultipliers(s, q.from(), b.ofDay().length);
         double[][] sums = sum(store.forecast(), q, q.routes(), b, m);
         List<Point> series = new ArrayList<>(b.labels().size());
         double[] tot = new double[3];
@@ -109,6 +115,11 @@ public class ForecastService {
             for (int k = 0; k < 3; k++) {
                 tot[k] += sums[k][i];
             }
+        }
+        Total total = new Total(round1(tot[0]), round1(tot[1]), round1(tot[2]), round1(tot[1]));
+        if (m == null) {
+            return new Forecast(q.horizon(), q.from().toString(), q.to().toString(), q.granularity(), numbers(q.routes()),
+                    q.stopId(), 1.0, NO_EFFECTS, series, total);
         }
         // вес дня - базовый p50 выборки за этот день, по нему поправки дней сводятся в один множитель
         double[] w = sum(store.forecast(), q, q.routes(),
@@ -120,15 +131,14 @@ public class ForecastService {
                 effective(dayMultipliers(new Scenario(0, 0, 0, s.eventPct(), 0), q.from(), w.length), w),
                 effective(dayMultipliers(new Scenario(0, 0, 0, 0, s.seasonPct()), q.from(), w.length), w));
         return new Forecast(q.horizon(), q.from().toString(), q.to().toString(), q.granularity(), numbers(q.routes()),
-                q.stopId(), effective(m, w), effects, series,
-                new Total(round1(tot[0]), round1(tot[1]), round1(tot[2]), round1(tot[1])));
+                q.stopId(), effective(m, w), effects, series, total);
     }
 
     /** Те же параметры, что у /forecast, но с разбивкой по маршрутам. */
     public ExportData exportRows(ForecastParams p, CorrectionParams c) {
         Query q = forecastQuery(p, c);
         Buckets b = buckets(q.from(), q.to(), q.hourFrom(), q.hourTo(), q.granularity());
-        double[] m = dayMultipliers(q.scenario(), q.from(), b.ofDay().length);
+        double[] m = q.scenario().neutral() ? null : dayMultipliers(q.scenario(), q.from(), b.ofDay().length);
         List<ExportRow> rows = new ArrayList<>(b.labels().size() * q.routes().length);
         for (int r : q.routes()) {
             double[][] sums = sum(store.forecast(), q, new int[] {r}, b, m);
