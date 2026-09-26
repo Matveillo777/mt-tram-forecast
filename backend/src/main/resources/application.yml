@@ -1,0 +1,51 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: tram-forecast
+  http:
+    codecs:
+      # предел тела запроса для POST /ingest/validations
+      max-in-memory-size: 10MB
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  webflux:
+    problemdetails:
+      enabled: true
+  web:
+    resources:
+      # статики нет, неизвестный адрес уходит в общий обработчик ошибок и получает ответ на русском
+      add-mappings: false
+
+app:
+  data-dir: ${DATA_DIR:/app/data}
+  today: ${APP_TODAY:2025-11-01}
+  live:
+    demo: ${LIVE_DEMO:true}
+    # пусто = app.today
+    date: ${LIVE_DATE:}
+    seconds-per-hour: 20
+    demo-start-hour: 6
+  cors:
+    # GET-запросы API разрешены с этих адресов, через запятую
+    allowed-origins: ${CORS_ORIGINS:*}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+springdoc:
+  paths-to-match: /api/**
+  swagger-ui:
+    path: /swagger-ui.html
