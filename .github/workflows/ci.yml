@@ -81,7 +81,7 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' "localhost:8080/api/v1/forecast?route=99"); echo "$code bad route"; test "$code" = 404
       - name: load test (backend limited to 2 vCPU / 2 GB)
         run: |
-          mkdir -p loadtest/out
+          mkdir -p loadtest/out && chmod 777 loadtest/out
           cid=$(docker compose ps -q backend)
           docker inspect -f 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}}' "$cid" | tee loadtest/out/limits.txt
           (for i in $(seq 1 45); do docker stats --no-stream --format '{{.CPUPerc}};{{.MemUsage}}' "$cid"; sleep 2; done) > loadtest/out/stats.csv &
