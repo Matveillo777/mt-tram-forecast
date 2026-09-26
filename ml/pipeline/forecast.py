@@ -30,6 +30,24 @@ def month_index(hourly, days):
     return (lvl / lvl[10]).to_dict()
 
 
+def model_card(model, months):
+    """Everything the fitted model learned, in plain JSON."""
+    def keyed(series_or_dict):
+        items = series_or_dict.items()
+        return {f"{r}/{k}": (round(float(v), 1) if np.ndim(v) == 0 else [round(float(x), 5) for x in v]) for (r, k), v in items}
+    return {
+        "trained_until": AS_OF,
+        "coefficients": {k: round(float(v), 5) for k, v in model.beta.items()},
+        "base_daily_boardings": keyed(model.base),
+        "base_during_events": keyed(model.base_event),
+        "weekday_ratio_after_events": {f"{r}/{k}": round(float(v), 4) for (r, k), v in model.restore_ratio.items() if np.isfinite(v)},
+        "hourly_profiles": keyed(model.profiles),
+        "month_factor": {str(k): round(float(v), 4) for k, v in months.items()},
+        "special_days": model.special_days,
+        "new_routes": model.new_routes,
+    }
+
+
 def event_effects(hourly, events):
     """Measured effect of each disruption: median day during it / median same weekday in the 4 weeks before."""
     daily = hourly.groupby(["route", "date"]).boardings.sum()
@@ -130,6 +148,7 @@ def main():
                       "note": "p10 и p90 - квантили отношения факт/прогноз дневной суммы маршрута на исторических окнах"},
     }
     (ARTIFACTS / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=1), encoding="utf-8")
+    (ARTIFACTS / "model.json").write_text(json.dumps(model_card(model, months), ensure_ascii=False), encoding="utf-8")
     print("submission rows", len(sub), "total", int(sub.prediction.sum()))
     print("coefficients", metrics["model"]["coefficients"])
 

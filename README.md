@@ -124,7 +124,13 @@ python -m pipeline.backtest   # проверка на истории и вкла
 python -m pipeline.forecast   # прогноз на год, коэффициенты, submission/submission.csv
 ```
 
-Файл для платформы: [submission/submission.csv](submission/submission.csv).
+Обучение и прогноз вместе занимают несколько секунд. Артефакты модели:
+
+- [ml/artifacts/model.json](ml/artifacts/model.json) - всё, что модель выучила: коэффициенты поправок, базовые уровни маршрутов по типам дня, почасовые профили, сезонность, особые дни;
+- [ml/artifacts/forecast_hourly.csv](ml/artifacts/forecast_hourly.csv) - прогноз p10 / p50 / p90 по часам на 365 дней для всех маршрутов;
+- [ml/artifacts/metrics.json](ml/artifacts/metrics.json) и `backtest.json` - проверка на истории и вклад внешних источников;
+- [ml/artifacts/factors.json](ml/artifacts/factors.json) - корректирующие коэффициенты для интерфейса;
+- [submission/submission.csv](submission/submission.csv) - файл для платформы (ноябрь-декабрь 2025, 14 640 строк).
 
 ## Документация
 
