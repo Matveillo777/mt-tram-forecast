@@ -1,0 +1,185 @@
+{
+ "model": {
+  "name": "Уровень дня x профиль часа",
+  "description": "Дневной уровень маршрута берётся из последних чистых недель без влияния погоды, поправки на календарь, погоду и ремонты даёт гребневая регрессия (scikit-learn) с ограничением знаков, распределение по часам - средний профиль последних 4 недель для своего типа дня.",
+  "features": [
+   "hol",
+   "hol_we",
+   "pre",
+   "school",
+   "rain_warm",
+   "rain_we",
+   "snow",
+   "heat",
+   "cold"
+  ],
+  "coefficients": {
+   "hol": -0.0949,
+   "hol_we": -0.0153,
+   "pre": -0.0387,
+   "school": -0.0295,
+   "rain_warm": -0.0506,
+   "rain_we": -0.085,
+   "snow": -0.046,
+   "heat": -0.0087,
+   "cold": -0.0
+  },
+  "month_factor": {
+   "1": 0.969,
+   "2": 1.006,
+   "3": 1.039,
+   "4": 1.029,
+   "5": 1.015,
+   "6": 0.92,
+   "7": 0.788,
+   "8": 0.801,
+   "9": 0.974,
+   "10": 1.0,
+   "11": 1.0,
+   "12": 1.0
+  },
+  "special_days": {
+   "work_sat": 0.88,
+   "12-29": 0.9,
+   "12-30": 0.88
+  },
+  "trained_until": "2025-10-31"
+ },
+ "backtests": [
+  {
+   "name": "02-28 -> 04-30",
+   "origin": "2025-02-28",
+   "horizon_days": 61,
+   "wape_score": 0.8732,
+   "Погода (Open-Meteo)": 0.8731,
+   "Календарь и каникулы": 0.8529,
+   "Ремонты и перекрытия (новости)": 0.8732
+  },
+  {
+   "name": "03-31 -> 05-31",
+   "origin": "2025-03-31",
+   "horizon_days": 61,
+   "wape_score": 0.848,
+   "Погода (Open-Meteo)": 0.8485,
+   "Календарь и каникулы": 0.8148,
+   "Ремонты и перекрытия (новости)": 0.848
+  },
+  {
+   "name": "04-30 -> 06-30",
+   "origin": "2025-04-30",
+   "horizon_days": 61,
+   "wape_score": 0.8557,
+   "Погода (Open-Meteo)": 0.8503,
+   "Календарь и каникулы": 0.8002,
+   "Ремонты и перекрытия (новости)": 0.8062
+  },
+  {
+   "name": "05-31 -> 07-31",
+   "origin": "2025-05-31",
+   "horizon_days": 61,
+   "wape_score": 0.8006,
+   "Погода (Open-Meteo)": 0.788,
+   "Календарь и каникулы": 0.7924,
+   "Ремонты и перекрытия (новости)": 0.7926
+  },
+  {
+   "name": "06-30 -> 08-31",
+   "origin": "2025-06-30",
+   "horizon_days": 62,
+   "wape_score": 0.8221,
+   "Погода (Open-Meteo)": 0.8201,
+   "Календарь и каникулы": 0.8081,
+   "Ремонты и перекрытия (новости)": 0.8236
+  },
+  {
+   "name": "08-31 -> 10-31",
+   "origin": "2025-08-31",
+   "horizon_days": 61,
+   "wape_score": 0.8213,
+   "Погода (Open-Meteo)": 0.8061,
+   "Календарь и каникулы": 0.8244,
+   "Ремонты и перекрытия (новости)": 0.8134
+  },
+  {
+   "name": "09-30 -> 10-31",
+   "origin": "2025-09-30",
+   "horizon_days": 31,
+   "wape_score": 0.9035,
+   "Погода (Open-Meteo)": 0.9026,
+   "Календарь и каникулы": 0.9044,
+   "Ремонты и перекрытия (новости)": 0.9059
+  }
+ ],
+ "by_route": [
+  {
+   "route": 1,
+   "wape_score": 0.8281
+  },
+  {
+   "route": 7,
+   "wape_score": 0.7802
+  },
+  {
+   "route": 11,
+   "wape_score": 0.842
+  },
+  {
+   "route": 12,
+   "wape_score": 0.8701
+  },
+  {
+   "route": 17,
+   "wape_score": 0.8863
+  },
+  {
+   "route": 25,
+   "wape_score": 0.742
+  },
+  {
+   "route": 26,
+   "wape_score": 0.7512
+  },
+  {
+   "route": 28,
+   "wape_score": 0.752
+  },
+  {
+   "route": 50,
+   "wape_score": 0.7069
+  }
+ ],
+ "external_effects": [
+  {
+   "source": "Погода (Open-Meteo)",
+   "metric": "средний WAPE-score по окнам",
+   "without": 0.8412,
+   "with": 0.8463,
+   "delta": 0.0051,
+   "note": "дневные осадки, снег, жара и холод; осадки считаются за 7-21 ч",
+   "url": "https://archive-api.open-meteo.com/v1/archive?latitude=55.7558&longitude=37.6173&start_date=2020-01-01&end_date=2025-12-31&daily=temperature_2m_mean,precipitation_sum,rain_sum,snowfall_sum,snow_depth_max&timezone=Europe%2FMoscow&format=csv"
+  },
+  {
+   "source": "Календарь и каникулы",
+   "metric": "средний WAPE-score по окнам",
+   "without": 0.8282,
+   "with": 0.8463,
+   "delta": 0.0182,
+   "note": "праздники, переносы, предпраздничные дни, школьные каникулы Москвы",
+   "url": "https://www.consultant.ru/law/ref/calendar/proizvodstvennye/2025/"
+  },
+  {
+   "source": "Ремонты и перекрытия (новости)",
+   "metric": "средний WAPE-score по окнам",
+   "without": 0.8376,
+   "with": 0.8463,
+   "delta": 0.0088,
+   "note": "закрытия и укорочения маршрутов по новостям Мосгортранса и СМИ",
+   "url": "https://gazeta-smedvedkovo.ru/tramvaj-17-ne-budet-hodit-v-storonu-medvedkovo-po-vyhodnym/, https://rg.ru/2025/07/08/reg-cfo/pauza-v-ozhidanii-vitiazej.html, https://uv-kurier.ru/2025/07/08/u-tramvaya-37-konechnaya-budet-v-lefortove-a-marshruty-50-i-13-obedinyat/, https://www.mskagency.ru/materials/3506273"
+  }
+ ],
+ "intervals": {
+  "p10_ratio": 0.779,
+  "p90_ratio": 1.214,
+  "note": "p10 и p90 - квантили отношения факт/прогноз дневной суммы маршрута на исторических окнах"
+ }
+}

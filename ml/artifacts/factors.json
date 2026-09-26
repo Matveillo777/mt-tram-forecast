@@ -1,0 +1,88 @@
+{
+ "weather": {
+  "cold_coef": -0.0,
+  "heat_coef": -0.00866,
+  "precip_coef": -0.06778,
+  "snow_coef": -0.04598
+ },
+ "formula": "m = exp(cold_coef*max(-temp_delta,0) + heat_coef*max(temp_delta,0) + precip_coef*ln(1+precip_mm) + snow_coef*ln(1+snow_cm)) * (1+event_pct/100) * (1+season_pct/100)",
+ "limits": {
+  "temp_delta": [
+   -15,
+   15
+  ],
+  "precip_mm": [
+   0,
+   30
+  ],
+  "snow_cm": [
+   0,
+   30
+  ],
+  "event_pct": [
+   -100,
+   100
+  ],
+  "season_pct": [
+   -30,
+   30
+  ]
+ },
+ "presets": [
+  {
+   "id": "snowfall",
+   "title": "Сильный снегопад",
+   "temp_delta": -5,
+   "precip_mm": 0,
+   "snow_cm": 10,
+   "event_pct": 0,
+   "season_pct": 0
+  },
+  {
+   "id": "rain",
+   "title": "Затяжной дождь",
+   "temp_delta": 0,
+   "precip_mm": 12,
+   "snow_cm": 0,
+   "event_pct": 0,
+   "season_pct": 0
+  },
+  {
+   "id": "frost",
+   "title": "Сильный мороз",
+   "temp_delta": -15,
+   "precip_mm": 0,
+   "snow_cm": 0,
+   "event_pct": 0,
+   "season_pct": 0
+  },
+  {
+   "id": "closure",
+   "title": "Закрытие участка",
+   "temp_delta": 0,
+   "precip_mm": 0,
+   "snow_cm": 0,
+   "event_pct": -60,
+   "season_pct": 0
+  },
+  {
+   "id": "event",
+   "title": "Массовое мероприятие",
+   "temp_delta": 0,
+   "precip_mm": 0,
+   "snow_cm": 0,
+   "event_pct": 25,
+   "season_pct": 0
+  },
+  {
+   "id": "summer",
+   "title": "Летний спад",
+   "temp_delta": 0,
+   "precip_mm": 0,
+   "snow_cm": 0,
+   "event_pct": 0,
+   "season_pct": -20
+  }
+ ],
+ "note": "Коэффициенты взяты из той же регрессии, что строит прогноз уровня дня: это оценка по истории 2025 года, а не допущение."
+}
