@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# data that is never committed (raw validations, intermediate files)
+ml/data/raw/
+ml/data/processed/
+*.tmp
+.tmp/
+
+# Java
+backend/target/
+
+# Node
+node_modules/
+frontend/dist/
+
+# load test output
+loadtest/out/
+
+# IDE and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

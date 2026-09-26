@@ -1,0 +1,20 @@
+date_from,date_to,system,school_year,note,source_url
+2024-10-26,2024-11-04,quarter,2024/25,Осенние каникулы (рекомендация Департамента образования и науки Москвы),https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2024-12-29,2025-01-08,quarter,2024/25,Новогодние (зимние) каникулы,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-02-15,2025-02-24,quarter,2024/25,Дополнительные (февральские) каникулы - обычно для 1-х классов,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-03-29,2025-04-06,quarter,2024/25,Весенние каникулы,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2024-10-05,2024-10-13,trimester,2024/25,1-й модуль (модульная/триместровая система),https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2024-11-16,2024-11-24,trimester,2024/25,2-й модуль,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2024-12-29,2025-01-08,trimester,2024/25,3-й модуль (совпадает с новогодними каникулами),https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-02-15,2025-02-24,trimester,2024/25,4-й модуль,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-04-05,2025-04-13,trimester,2024/25,5-й модуль,https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-05-24,2025-08-31,all,2024/25,"Летние каникулы (после окончания учебного года, даты по школе могут отличаться на несколько дней)",https://skillbox.ru/media/education/kanikuly-v-20242025-godu-kogda-otdykhayut-shkolniki/
+2025-10-25,2025-11-02,quarter,2025/26,Осенние каникулы (рекомендация Департамента образования и науки Москвы),https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2025-12-31,2026-01-11,quarter,2025/26,Новогодние (зимние) каникулы,https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2026-02-21,2026-03-01,quarter,2025/26,Весенние каникулы (пересекаются с Днём защитника Отечества),https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2025-10-04,2025-10-12,trimester,2025/26,1-й модуль,https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2025-11-15,2025-11-23,trimester,2025/26,2-й модуль,https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2025-12-31,2026-01-11,trimester,2025/26,3-й модуль (совпадает с новогодними каникулами),https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2026-02-21,2026-03-01,trimester,2025/26,4-й модуль,https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2026-03-28,2026-04-04,trimester,2025/26,5-й модуль,https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
+2026-05-26,2026-08-31,all,2025/26,Летние каникулы (учебный год завершается 26 мая 2026 года; даты по школе могут отличаться),https://skillbox.ru/media/education/shkolnye-kanikuly-na-20252026-uchebnyy-god-raspisanie-po-chetvertyam-i-trimestram/
