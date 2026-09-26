@@ -1,0 +1,40 @@
+services:
+  backend:
+    build: ./backend
+    image: mt-tram-forecast-backend:latest
+    environment:
+      DATA_DIR: /app/data
+      APP_TODAY: "2025-11-01"
+      LIVE_DEMO: "true"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70"
+    volumes:
+      - ./ml/artifacts:/app/data:ro
+    ports:
+      - "8081:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    image: mt-tram-forecast-frontend:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  # rebuilds ml/artifacts and submission/submission.csv from the organizers' data:
+  #   docker compose --profile pipeline run --rm pipeline
+  pipeline:
+    build: ./ml
+    profiles: ["pipeline"]
+    environment:
+      DATASET_ZIP: /work/ml/data/raw/dataset.zip
+    volumes:
+      - .:/work
+    working_dir: /work/ml

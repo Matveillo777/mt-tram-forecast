@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      rate:
+        description: "Запросов в секунду для нагрузочного теста"
+        default: "400"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: ./mvnw -B -q test package
+        working-directory: backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: frontend
+
+  ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r ml/requirements.txt
+      - name: backtests and final forecast from committed history
+        working-directory: ml
+        run: |
+          python -m pipeline.backtest
+          python -m pipeline.forecast
+      - name: submission format
+        run: |
+          python - <<'EOF'
+          import pandas as pd
+          s = pd.read_csv("submission/submission.csv", sep=";")
+          assert list(s.columns) == ["route", "date", "hour", "prediction"]
+          assert len(s) == 14640 and s.prediction.min() >= 0
+          print("submission ok", int(s.prediction.sum()))
+          EOF
+
+  docker:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and start
+        run: |
+          docker compose build
+          docker compose up -d
+          for i in $(seq 1 60); do curl -sf localhost:8081/actuator/health && break; sleep 2; done
+          curl -sf localhost:8080/ > /dev/null
+      - name: smoke test through the frontend proxy
+        run: |
+          set -e
+          for u in /api/v1/meta /api/v1/routes /api/v1/routes/geojson "/api/v1/forecast?horizon=day&route=17" \
+                   "/api/v1/forecast?horizon=month&granularity=day" "/api/v1/forecast?horizon=year&granularity=month" \
+                   "/api/v1/map?date=2025-11-10&hour=8" "/api/v1/dispatch?route=17&date=2025-11-10" /api/v1/model /api/v1/factors \
+                   "/api/v1/live?date=2025-11-01" "/api/v1/export?format=xlsx&horizon=day&route=17"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "localhost:8080$u"); echo "$code $u"; test "$code" = 200
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' "localhost:8080/api/v1/forecast?route=99"); echo "$code bad route"; test "$code" = 404
+      - name: load test (backend limited to 2 vCPU / 2 GB)
+        run: |
+          mkdir -p loadtest/out
+          cid=$(docker compose ps -q backend)
+          docker inspect -f 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}}' "$cid" | tee loadtest/out/limits.txt
+          (for i in $(seq 1 45); do docker stats --no-stream --format '{{.CPUPerc}};{{.MemUsage}}' "$cid"; sleep 2; done) > loadtest/out/stats.csv &
+          docker run --rm --network host -v "$PWD/loadtest:/lt" grafana/k6 run \
+            -e BASE=http://localhost:8081 -e RATE=${{ github.event.inputs.rate || '400' }} -e DURATION=60s \
+            --summary-export /lt/out/summary.json /lt/k6.js | tee loadtest/out/k6.txt
+          wait
+          python3 loadtest/report.py >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loadtest
+          path: loadtest/out
+      - name: save images for deployment
+        if: github.ref == 'refs/heads/main'
+        run: docker save mt-tram-forecast-backend:latest mt-tram-forecast-frontend:latest | gzip > images.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: images
+          path: images.tar.gz
+          retention-days: 7
