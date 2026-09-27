@@ -1,4 +1,4 @@
-"""Backs the docs/model.md claim: LightGBM on the same features gave no gain over the scheme.
+"""LightGBM against the Forecaster on the backtest windows (docs/model.md).
 
     python -m pipeline.compare_lgbm
 
@@ -48,7 +48,7 @@ def _profile_table(hist: pd.DataFrame, origin: str) -> pd.Series:
 def _profile_lookup(prof: pd.Series, frame: pd.DataFrame) -> np.ndarray:
     """route x weekday x hour, falling back to route x hour for combos absent from the window."""
     fallback = prof.groupby(level=[0, 2]).median()
-    vals = prof.reindex(pd.MultiIndex.from_arrays([frame.route, frame.dow, frame.hour])).values
+    vals = prof.reindex(pd.MultiIndex.from_arrays([frame.route, frame.dow, frame.hour])).to_numpy(dtype=float, copy=True)
     miss = np.isnan(vals)
     if miss.any():
         vals[miss] = fallback.reindex(pd.MultiIndex.from_arrays([frame.route[miss], frame.hour[miss]])).values
@@ -113,7 +113,7 @@ def main():
     keys = ("forecaster", "lgbm_l1", "lgbm_2", "profile", "blend_forecaster_lgbm_l1")
     mean = {k: round(float(np.mean([w[k] for w in windows])), 4) for k in keys}
     out = {"windows": windows, "mean": mean}
-    (ARTIFACTS / "lgbm_compare.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    (ARTIFACTS / "lgbm_compare.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8", newline=chr(10))
     print("mean:", mean)
 
 

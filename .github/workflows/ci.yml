@@ -48,6 +48,9 @@ jobs:
         run: |
           python -m pipeline.backtest
           python -m pipeline.forecast
+          python -m pipeline.compare_lgbm
+      - name: artifacts match the committed ones
+        run: git diff --stat -- ml/artifacts submission
       - name: submission format
         run: |
           python - <<'EOF'

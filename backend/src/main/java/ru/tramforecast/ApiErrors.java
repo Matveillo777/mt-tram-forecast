@@ -82,7 +82,10 @@ public class ApiErrors implements WebExceptionHandler {
                 case 404 -> "Такого адреса нет. Список методов API: /swagger-ui.html";
                 case 405 -> "Метод не поддерживается для этого адреса";
                 case 406 -> "Запрошенный формат ответа не поддерживается";
-                default -> er.getBody().getDetail();
+                // Spring отбрасывает такие запросы раньше контроллера и без пояснения
+                case 415 -> "Неподдерживаемый Content-Type. Ожидается text/csv или application/json";
+                default -> er.getBody().getDetail() != null ? er.getBody().getDetail()
+                        : HttpStatus.valueOf(status.value()).getReasonPhrase();
             });
         }
         log.error("Необработанная ошибка", e);

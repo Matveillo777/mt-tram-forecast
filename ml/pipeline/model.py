@@ -172,7 +172,8 @@ class Forecaster:
         # normal weekend/weekday ratio for restoring a route after an event (spring, before any 2025 closures)
         spring = clean[(clean.date >= "2025-02-01") & (clean.date <= "2025-05-31")]
         lv = spring.groupby(["route", "kind"]).total.median()
-        self.restore_ratio = {(r, k): lv.get((r, k), np.nan) / lv.get((r, "mid"), np.nan) for r, k in lv.index}
+        with np.errstate(invalid="ignore", divide="ignore"):  # route 5 has no boardings at all
+            self.restore_ratio = {(r, k): lv.get((r, k), np.nan) / lv.get((r, "mid"), np.nan) for r, k in lv.index}
 
     def _fit_profiles(self, mat, clean):
         start = self.as_of - pd.Timedelta(weeks=self.shape_weeks)

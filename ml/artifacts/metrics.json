@@ -186,22 +186,13 @@
    "url": "https://www.consultant.ru/law/ref/calendar/proizvodstvennye/2025/"
   },
   {
-   "source": "Очистка аномалий в данных",
-   "metric": "средний WAPE-score по окнам",
-   "without": 0.8352,
-   "with": 0.8425,
-   "delta": 0.0074,
-   "note": "дни с провалом посадок, найденные в самих данных (маршрут 17, апрель 2025), не попадают в базу прогноза",
-   "url": ""
-  },
-  {
    "source": "Новости об изменении маршрутов",
    "metric": "прогноз, обновлённый в день выхода новости, средний WAPE-score",
-   "without": 0.8266,
-   "with": 0.8304,
-   "delta": 0.0039,
-   "note": "окна от 8 июля и 5 сентября 2025 года, когда вышли новости о работах на маршрутах 7 и 50",
-   "url": "https://rg.ru/2025/07/08/reg-cfo/pauza-v-ozhidanii-vitiazej.html, https://uv-kurier.ru/2025/07/08/u-tramvaya-37-konechnaya-budet-v-lefortove-a-marshruty-50-i-13-obedinyat/, https://www.mskagency.ru/materials/3506273"
+   "without": 0.8273,
+   "with": 0.8402,
+   "delta": 0.0129,
+   "note": "прогнозы от 8 июля и 5 сентября 2025 года (дни выхода новостей о работах на маршрутах 7 и 50) и от 1 августа (известна дата окончания июльских работ)",
+   "url": "https://www.mskagency.ru/materials/3506273"
   }
  ],
  "intervals": {

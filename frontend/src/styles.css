@@ -355,6 +355,7 @@ pre.code { margin: 0; background: var(--surface-2); border: 1px solid var(--line
 .map-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .map-box { position: relative; height: calc(100vh - 290px); min-height: 420px; background: var(--surface-2); }
 .map-box .maplibregl-map { position: absolute; inset: 0; }
+.map-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-2); pointer-events: none; }
 .map-overlay { position: absolute; z-index: 2; pointer-events: none; }
 .map-overlay > * { pointer-events: auto; }
 .map-legend { left: 12px; bottom: 12px; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 10px; font-size: var(--fs-xs); color: var(--text-2); display: flex; flex-direction: column; gap: 6px; }

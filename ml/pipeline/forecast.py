@@ -48,17 +48,18 @@ def model_card(model, months):
     }
 
 
-def event_effects(hourly, events):
-    """Measured effect of each disruption: median day during it / median same weekday in the 4 weeks before."""
+def event_effects(hourly, events, days):
+    """Measured effect of each disruption: median day during it / median of the same days in the 4 weeks before.
+    Launches and restorations have nothing to compare with and get 1."""
     daily = hourly.groupby(["route", "date"]).boardings.sum()
     out = []
     for e in events.itertuples():
-        if e.kind not in ("closure", "shortened", "reroute") or e.route not in daily.index.get_level_values(0):
+        if e.kind not in ("closure", "shortened", "reroute", "anomaly") or e.route not in daily.index.get_level_values(0):
             out.append(1.0)
             continue
         d = daily.loc[e.route]
-        weekend = d.index.dayofweek >= 5
-        sel = {"weekend": weekend, "workday": ~weekend}.get(e.days, np.ones(len(d), bool))
+        off = days.offday.reindex(d.index).values == 1
+        sel = {"weekend": off, "workday": ~off}.get(e.days, np.ones(len(d), bool))
         during = d[sel & (d.index >= e.date_from) & (d.index <= e.date_to)]
         before = d[sel & (d.index < e.date_from) & (d.index >= e.date_from - pd.Timedelta(weeks=4))]
         ok = len(during) and len(before) and before.median() > 0
@@ -78,13 +79,8 @@ def main():
     bt_path = ARTIFACTS / "backtest.json"
     bt = json.loads(bt_path.read_text(encoding="utf-8")) if bt_path.exists() else {}
     q = bt.get("daily_ratio_quantiles", {"p10": 0.9, "p90": 1.1})
-    pred["p10"] = (pred.p50 * min(q["p10"], 1.0)).round(1)
-    pred["p90"] = (pred.p50 * max(q["p90"], 1.0)).round(1)
-    pred["p50"] = pred.p50.round(1)
     pred["date"] = pred.date.dt.strftime("%Y-%m-%d")
-    pred[["route", "date", "hour", "p10", "p50", "p90"]].sort_values(["route", "date", "hour"]).to_csv(
-        ARTIFACTS / "forecast_hourly.csv", index=False)
-
+    # the submission is rounded once from the exact p50, like in the backtests
     sub = pred[pred.date <= SUBMISSION_TO][["route", "date", "hour", "p50"]].rename(columns={"p50": "prediction"})
     sub["prediction"] = sub.prediction.round().clip(lower=0).astype(int)
     sub = sub.sort_values(["route", "date", "hour"])
@@ -93,6 +89,12 @@ def main():
     out.mkdir(exist_ok=True)
     sub.to_csv(out / "submission.csv", sep=";", index=False, lineterminator=LF)
 
+    pred["p10"] = (pred.p50 * min(q["p10"], 1.0)).round(1)
+    pred["p90"] = (pred.p50 * max(q["p90"], 1.0)).round(1)
+    pred["p50"] = pred.p50.round(1)
+    pred[["route", "date", "hour", "p10", "p50", "p90"]].sort_values(["route", "date", "hour"]).to_csv(
+        ARTIFACTS / "forecast_hourly.csv", index=False, lineterminator=LF)
+
     cal = days.reset_index()[["date", "kind", "hol", "pre", "school"]]
     cal = cal[(cal.date >= "2025-01-01") & (cal.date <= "2026-12-31")]
     kind = cal.kind.map({"hol": "holiday", "sat": "saturday", "sun": "sunday"}).fillna("workday")
@@ -100,7 +102,7 @@ def main():
     pd.DataFrame({"date": cal.date.dt.strftime("%Y-%m-%d"), "day_type": kind,
                   "is_holiday": (kind == "holiday").astype(int) | days.reindex(cal.date).hol_we.values,
                   "is_preholiday": cal.pre.values, "school_break": cal.school.values | days.reindex(cal.date).school.values,
-                  "note": notes}).to_csv(ARTIFACTS / "calendar.csv", index=False)
+                  "note": notes}).to_csv(ARTIFACTS / "calendar.csv", index=False, lineterminator=LF)
 
     wx = external.weather_for(pd.date_range("2025-01-01", FORECAST_TO))
     pd.DataFrame({"date": wx.index.strftime("%Y-%m-%d"), "t_mean": wx.t_mean.round(1), "precip_mm": wx.precip_mm.round(1),
@@ -108,9 +110,9 @@ def main():
                   "source": wx.source}).to_csv(ARTIFACTS / "weather_daily.csv", index=False, lineterminator=LF)
 
     ev = external.load_events()
-    ev_out = ev.assign(factor=event_effects(hourly, ev),
+    ev_out = ev.assign(factor=event_effects(hourly, ev, days),
                        date_from=ev.date_from.dt.strftime("%Y-%m-%d"), date_to=ev.date_to.dt.strftime("%Y-%m-%d"))
-    ev_out[["route", "date_from", "date_to", "days", "factor", "title", "source_url"]].to_csv(ARTIFACTS / "events.csv", index=False)
+    ev_out[["route", "date_from", "date_to", "days", "factor", "title", "source_url"]].to_csv(ARTIFACTS / "events.csv", index=False, lineterminator=LF)
 
     b = model.beta
     factors = {
@@ -135,7 +137,7 @@ def main():
                  "жара - выше 20 °C. Мороз в данных 2025 года на поездки почти не влиял, его коэффициент близок к нулю. "
                  "Осадки и снег - за дневные часы 7-21, в пределах, которые встречались в истории."),
     }
-    (ARTIFACTS / "factors.json").write_text(json.dumps(factors, ensure_ascii=False, indent=1), encoding="utf-8")
+    (ARTIFACTS / "factors.json").write_text(json.dumps(factors, ensure_ascii=False, indent=1), encoding="utf-8", newline=LF)
 
     metrics = {
         "model": {
@@ -157,8 +159,8 @@ def main():
         "intervals": {"p10_ratio": round(q["p10"], 3), "p90_ratio": round(q["p90"], 3),
                       "note": "p10 и p90 - квантили отношения факт/прогноз дневной суммы маршрута на исторических окнах"},
     }
-    (ARTIFACTS / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=1), encoding="utf-8")
-    (ARTIFACTS / "model.json").write_text(json.dumps(model_card(model, months), ensure_ascii=False), encoding="utf-8")
+    (ARTIFACTS / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=1), encoding="utf-8", newline=LF)
+    (ARTIFACTS / "model.json").write_text(json.dumps(model_card(model, months), ensure_ascii=False), encoding="utf-8", newline=LF)
     print("submission rows", len(sub), "total", int(sub.prediction.sum()))
     print("coefficients", metrics["model"]["coefficients"])
 

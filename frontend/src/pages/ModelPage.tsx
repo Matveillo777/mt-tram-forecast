@@ -409,7 +409,7 @@ function EventList({ rows }: { rows: EventRow[] }) {
             <span className="faint num">
               {e.date_from === e.date_to ? dateMid(e.date_from) : `${dateShort(e.date_from)} - ${dateMid(e.date_to)}`}, {DAYS[e.days] ?? e.days}
             </span>
-            <span className="event-effect num">{Number(e.factor) === 1 ? 'без изменений' : pct((e.factor - 1) * 100, 0)}</span>
+            <span className="event-effect num">{Number(e.factor) === 1 ? '-' : pct((e.factor - 1) * 100, 0)}</span>
           </div>
           <div className="event-title"><Ext href={e.source_url}>{e.title}</Ext></div>
         </div>

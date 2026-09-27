@@ -24,7 +24,7 @@ WINDOWS = [  # (origin = last known day, last forecast day)
     ("2025-09-30", "2025-10-31"),
 ]
 # forecasts refreshed on the day a service-change notice was published, before the change started
-NEWS_WINDOWS = [("2025-07-08", "2025-08-31"), ("2025-09-05", "2025-10-31")]
+NEWS_WINDOWS = [("2025-07-08", "2025-08-31"), ("2025-08-01", "2025-09-05"), ("2025-09-05", "2025-10-31")]
 ABLATIONS = {
     "Погода (Open-Meteo)": {"use_weather": False},
     "Календарь и каникулы": {"use_calendar": False},
@@ -66,11 +66,18 @@ def main():
         if origin == "2025-08-31":
             by_route = [{"route": int(r), "wape_score": round(wape_score(g.boardings, g.p50), 4)} for r, g in m.groupby("route") if g.boardings.sum() > 0]
         print(row)
+    cleaning = None
     for name in ABLATIONS:
-        if name.startswith("Ремонты"):
-            continue  # news rarely precede a window start; measured on publication days below
         without = float(np.mean([b[name] for b in backtests]))
         with_ = float(np.mean([b["wape_score"] for b in backtests]))
+        if name.startswith("Ремонты"):
+            news_standard = {"without": round(without, 4), "with": round(with_, 4), "delta": round(with_ - without, 4)}
+            continue  # news rarely precede a window start; the effect is measured on publication days below
+        if name.startswith("Очистка"):
+            # data cleaning, not an external source: reported apart
+            cleaning = {"without": round(without, 4), "with": round(with_, 4), "delta": round(with_ - without, 4),
+                        "note": sources[name]["note"]}
+            continue
         effects.append({"source": name, "metric": "средний WAPE-score по окнам", "without": round(without, 4), "with": round(with_, 4),
                         "delta": round(with_ - without, 4), "note": sources.get(name, {}).get("note", ""),
                         "url": sources.get(name, {}).get("url", "")})
@@ -84,7 +91,7 @@ def main():
     w, wo = np.mean([r["with_news"] for r in news_rows]), np.mean([r["without_news"] for r in news_rows])
     effects.append({"source": "Новости об изменении маршрутов", "metric": "прогноз, обновлённый в день выхода новости, средний WAPE-score",
                     "without": round(float(wo), 4), "with": round(float(w), 4), "delta": round(float(w - wo), 4),
-                    "note": "окна от 8 июля и 5 сентября 2025 года, когда вышли новости о работах на маршрутах 7 и 50",
+                    "note": "прогнозы от 8 июля и 5 сентября 2025 года (дни выхода новостей о работах на маршрутах 7 и 50) и от 1 августа (известна дата окончания июльских работ)",
                     "url": sources["Ремонты и изменения маршрутов (новости)"]["url"]})
     # where the error lives: the same October window with the true daily totals of each route put in
     m, _ = run_window(hourly, days, events, "2025-09-30", "2025-10-31")
@@ -101,8 +108,9 @@ def main():
     res = np.concatenate(residuals)
     quantiles = {"p10": float(np.exp(np.quantile(res, 0.10))), "p90": float(np.exp(np.quantile(res, 0.90)))}
     out = {"mode": "на начало окна известны только погода и новости до этой даты, после неё берётся климатическая норма",
-           "summary": summary, "news_windows": news_rows, "backtests": backtests, "by_route": by_route, "external_effects": effects, "daily_ratio_quantiles": quantiles}
-    (ARTIFACTS / "backtest.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+           "summary": summary, "news_windows": news_rows, "news_on_standard_windows": news_standard, "data_cleaning": cleaning,
+           "backtests": backtests, "by_route": by_route, "external_effects": effects, "daily_ratio_quantiles": quantiles}
+    (ARTIFACTS / "backtest.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8", newline=chr(10))
     print(json.dumps(effects, ensure_ascii=False, indent=1))
     print(summary)
     print("quantiles of daily actual/forecast:", quantiles)

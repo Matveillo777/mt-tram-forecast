@@ -186,6 +186,11 @@ export function RouteMap({ geo, values, max, visible, selection, onSelect }: {
   return (
     <>
       <div ref={box} style={{ position: 'absolute', inset: 0 }} />
+      {ready === 0 && !offline && (
+        <div className="map-wait">
+          <span className="badge">Загружаем карту</span>
+        </div>
+      )}
       {offline && (
         <div className="map-overlay map-offline">
           <span className="badge">Подложка недоступна, показаны только маршруты</span>
